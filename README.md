@@ -112,7 +112,84 @@ Running the end-to-end prototype pipeline ([`examples/run_prototype.py`](example
 
 ---
 
-## 5. Running the Pipeline & Unit Tests
+## 5. Algorithmic Specifications & Mathematical Formulations
+
+A comprehensive reference is available in [ALGORITHMS.md](ALGORITHMS.md). Below is an overview of the key computational procedures:
+
+### 5.1 Direct Vectorized Tensor Transformation & Invariants (Algorithm 1)
+Stress is evaluated directly on joint samples using vectorized NumPy operations across arbitrary batch dimensions `(..., 6)`:
+
+* **Hydrostatic Stress**: $\sigma_h = \frac{1}{3}(\sigma_x + \sigma_y + \sigma_z)$
+* **Deviatoric Stress**: $\mathbf{s} = \boldsymbol{\sigma} - \sigma_h \mathbf{I}$
+* **Second Invariant ($J_2$) & von Mises**: 
+  $$J_2 = \frac{1}{6}\left[(\sigma_x - \sigma_y)^2 + (\sigma_y - \sigma_z)^2 + (\sigma_z - \sigma_x)^2\right] + \tau_{xy}^2 + \tau_{yz}^2 + \tau_{xz}^2, \quad \sigma_{\text{VM}} = \sqrt{3 J_2}$$
+* **Third Invariant ($J_3$)**:
+  $$J_3 = \det(\mathbf{s}) = s_x s_y s_z + 2 \tau_{xy}\tau_{yz}\tau_{xz} - s_x \tau_{yz}^2 - s_y \tau_{xz}^2 - s_z \tau_{xy}^2$$
+* **Principal Stresses**: Ordered eigenvalues $\sigma_1 \ge \sigma_2 \ge \sigma_3$ of the symmetric tensor matrix via LAPACK `eigvalsh`.
+* **Lode Angle & Parameter**:
+  $$\cos(3\theta) = \frac{3\sqrt{3}}{2} \frac{J_3}{J_2^{3/2}} \quad (\text{clipped to } [-1, 1], \text{ with } \theta \in [0, \pi/3]), \qquad \mu = \frac{2\sigma_2 - \sigma_1 - \sigma_3}{\sigma_1 - \sigma_3}$$
+* **Stress Triaxiality**: $\eta = \frac{\sigma_h}{\max(\sigma_{\text{VM}}, \epsilon)}$
+
+---
+
+### 5.2 Coordinate Frame Transformations & Anisotropy (Algorithm 2)
+The framework explicitly avoids isotropic assumptions ($p(\sigma_x) \neq p(\sigma_y)$). When material axes rotation is required, tensors are transformed via:
+$$\boldsymbol{\sigma}' = \mathbf{R}^T \boldsymbol{\sigma} \mathbf{R}$$
+implemented in vectorized einsum form: `np.einsum('...ik,...ij,...jl->...kl', R, sigma, R)`.
+
+---
+
+### 5.3 Law of Total Variance Decomposition (Algorithm 3)
+Separates the within-realization spatial heterogeneity from between-realization microstructure uncertainty:
+$$\operatorname{Var}(Q) = \underbrace{\sum_{r=1}^M w_r s_r^2}_{V_{\text{within}}} + \underbrace{\sum_{r=1}^M w_r (\mu_r - \bar{\mu})^2}_{V_{\text{between}}}$$
+where $\mu_r = E_X[Q \mid R=r]$, $s_r^2 = \operatorname{Var}_X(Q \mid R=r)$, and $\bar{\mu} = \sum_{r=1}^M w_r \mu_r$.
+
+$$\eta_{\text{within}} = \frac{V_{\text{within}}}{V_{\text{total}}}, \qquad \eta_{\text{between}} = \frac{V_{\text{between}}}{V_{\text{total}}}$$
+
+---
+
+### 5.4 Ensemble Mixture PDF & CDF (Algorithm 4)
+Avoids bias caused by naive spatial sample concatenation when RVE volumes or point counts differ:
+1. Identify global envelope $[q_{\min}, q_{\max}] = [\min_r \min_x Q^{(r)}(x), \; \max_r \max_x Q^{(r)}(x)]$.
+2. Form common bins $b_0 < b_1 < \dots < b_K$.
+3. Compute normalized single-RVE spatial PDFs: $\sum_k h_r(k) \Delta q_k = 1$.
+4. Compute weighted mixture: $h_{\text{ensemble}}(k) = \sum_{r=1}^M w_r h_r(k)$.
+5. Compute cumulative distribution: $F_{\text{ensemble}}(k) = \sum_{j=1}^k h_{\text{ensemble}}(j) \Delta q_j$.
+
+---
+
+### 5.5 Stress-Invariant Joint Probability & Superlevel Contours (Algorithm 5)
+Estimates joint density $f(p, q) \approx p(p, q)$ in $(p, q)$ or $(q, \theta)$ space:
+1. Discretize into 2D grid cells with area elements $\Delta A_{i,j} = \Delta p_i \Delta q_j$.
+2. Sort density values descending: $f_{(1)} \ge f_{(2)} \ge \dots \ge f_{(P)}$.
+3. Accumulate cumulative probability: $C_m = \sum_{k=1}^m f_{(k)} \Delta A_{(k)}$.
+4. Find threshold $c_\alpha = f_{(m^*)}$ where $C_{m^*} \ge \alpha$ for probability levels $\alpha \in \{0.50, 0.90, 0.95\}$.
+5. Extract contour isolines $\{ (p, q) : f(p, q) = c_\alpha \}$ to define probabilistic yield/failure domains.
+
+---
+
+### 5.6 Copula Reconstruction vs. Independent Marginals (Algorithm 6)
+Demonstrates why joint tensor sampling is necessary. If only 6 marginal distributions $p_i(\sigma_i)$ are known, naive independent sampling severely overestimates equivalent stresses (e.g. von Mises) because it destroys the physical covariance between normal stresses:
+1. Convert marginals to uniform ranks: $U_{i,j} = \frac{\operatorname{rank}(\sigma_{i,j})}{N + 1}$.
+2. Map to Gaussian space: $Z_{i,j} = \Phi^{-1}(U_{i,j})$.
+3. Fit Gaussian copula correlation matrix: $\mathbf{C} = \operatorname{corr}(\mathbf{Z})$.
+4. Sample correlated variates $\mathbf{Z}^* \sim \mathcal{N}(0, \mathbf{C})$, uniforms $\mathbf{U}^* = \Phi(\mathbf{Z}^*)$, and invert empirical quantiles $\sigma_{i,j}^* = F_j^{-1}(U_{i,j}^*)$.
+
+---
+
+### 5.7 3D Spatial Autocorrelation & Effective Sample Size (Algorithm 7)
+Integration points inside an RVE are spatially correlated; therefore $N_{\text{points}} \neq N_{\text{effective}}$.
+1. Compute centered zero-padded 3D FFT on grid: $\hat{q} = \operatorname{FFT}_{3D}(q_{\text{pad}})$.
+2. Calculate spatial autocovariance via Wiener–Khinchin theorem: $\operatorname{Cov}(\mathbf{r}) = \operatorname{Re}(\operatorname{IFFT}_{3D}(|\hat{q}|^2)) / \operatorname{Re}(\operatorname{IFFT}_{3D}(|\hat{M}|^2))$.
+3. Bin into radially averaged autocorrelation $R(r)$ and determine correlation length $\lambda$ where $R(\lambda) = 1/e$.
+4. Calculate correlation volume $V_c = \frac{4}{3}\pi \lambda^3$ and effective sample size:
+   $$N_{\text{eff}} = \operatorname{clip}\left(\frac{V}{V_c}, 1.0, N_{\text{points}}\right)$$
+5. Compute corrected standard error and confidence intervals:
+   $$\mathrm{SE}_{\text{effective}} = \frac{s}{\sqrt{N_{\text{eff}}}}, \qquad \mathrm{CI}_{95\%} = \left[ \bar{Q} \pm 1.96 \cdot \mathrm{SE}_{\text{effective}} \right]$$
+
+---
+
+## 6. Running the Pipeline & Unit Tests
 
 ### Execute Prototype Analysis & Generate Figures
 ```bash
@@ -130,3 +207,4 @@ All 22 unit tests validate:
 - Analytical validation of the Law of Total Variance
 - Direct ANSYS validation against `ansys_angle000.00_r0.hdf5` (`von_mises` matches ANSYS `SEQV` with 0 numerical error)
 - Copula dependence modeling and spatial autocorrelation
+
