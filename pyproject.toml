@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mv3d-stress-ensemble-statistics"
+version = "0.1.0"
+description = "Statistical analysis of stress fields in ensembles of RVE simulations using MatViz3D"
+readme = "agents.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "MME-NTU-KhPI" }
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "h5py>=3.8.0",
+    "matplotlib>=3.7.0",
+    "pandas>=2.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mv3d_stress_stats*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

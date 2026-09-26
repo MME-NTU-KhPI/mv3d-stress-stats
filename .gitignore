@@ -1,0 +1,22 @@
+# Data files
+*.hdf5
+*.h5
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments & builds
+.env
+.venv
+env/
+venv/
+build/
+dist/
+*.egg-info/
+.idea/
+.vscode/
