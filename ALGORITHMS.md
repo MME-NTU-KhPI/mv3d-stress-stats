@@ -13,6 +13,8 @@ This document provides the formal mathematical formulations and step-by-step alg
 6. [Algorithm 5: Stress-Invariant Joint Probability & Contour Superlevel Sets](#6-algorithm-5-stress-invariant-joint-probability--contour-superlevel-sets)
 7. [Algorithm 6: Copula Dependence Modeling vs. Independent Marginal Bias](#7-algorithm-6-copula-dependence-modeling-vs-independent-marginal-bias)
 8. [Algorithm 7: 3D Spatial Autocorrelation & Effective Sample Size ($N_{\text{eff}}$)](#8-algorithm-7-3d-spatial-autocorrelation--effective-sample-size-n_texttext-eff)
+9. [Algorithm 8: Multi-Loading Stress Representation & Loading Influence on $p(\sigma_{\mathrm{VM}} \mid L)$](#9-algorithm-8-multi-loading-stress-representation--loading-influence-on-psigma_textvm-mid-l)
+10. [Algorithm 9: Directional Stress Analysis & Rose Diagrams of Principal Axes](#10-algorithm-9-directional-stress-analysis--rose-diagrams-of-principal-axes)
 
 ---
 
@@ -224,3 +226,66 @@ For a 3D scalar field $Q(x, y, z)$ on grid $(N_x, N_y, N_z)$:
 4. **Adjusted Standard Error & 95% Confidence Interval**:
    $$\mathrm{SE}_{\text{naive}} = \frac{s}{\sqrt{N_{\text{points}}}}, \qquad \mathrm{SE}_{\text{effective}} = \frac{s}{\sqrt{N_{\text{eff}}}}$$
    $$\mathrm{CI}_{95\%} = \left[ \bar{Q} - 1.96 \cdot \mathrm{SE}_{\text{effective}}, \; \bar{Q} + 1.96 \cdot \mathrm{SE}_{\text{effective}} \right]$$
+
+---
+
+## 9. Algorithm 8: Multi-Loading Stress Representation & Loading Influence on $p(\sigma_{\mathrm{VM}} \mid L)$
+
+Constitutive stress responses depend strongly on the macroscopic loading state $L = (\boldsymbol{\varepsilon}_{\text{macro}})$. In accordance with Section 23 of `AGENTS.md`, loading condition is treated as an explicit analysis dimension.
+
+### 9.1 Multi-Load Ensemble Probability Mixture
+For an arbitrary macroscopic strain state $L \in \{ \varepsilon_x, \varepsilon_y, \varepsilon_z, \varepsilon_{xy}, \varepsilon_{yz}, \varepsilon_{xz}, \dots \}$:
+$$p(Q \mid L) = \sum_{r=1}^M w_r p(Q \mid R=r, L)$$
+with realization weights $\sum_r w_r = 1$.
+
+### 9.2 Law of Total Variance across Loading Conditions
+For each load step $L$, total variance decomposes into spatial and microstructural contributions:
+$$\operatorname{Var}(Q \mid L) = \underbrace{\sum_{r=1}^M w_r s_r^2(L)}_{V_{\text{within}}(L)} + \underbrace{\sum_{r=1}^M w_r (\mu_r(L) - \bar{\mu}(L))^2}_{V_{\text{between}}(L)}$$
+where:
+$$\mu_r(L) = E_X[Q \mid R=r, L], \qquad s_r^2(L) = \operatorname{Var}_X(Q \mid R=r, L), \qquad \bar{\mu}(L) = \sum_{r=1}^M w_r \mu_r(L)$$
+
+### 9.3 Directional Anisotropy Metrics
+Quantifies macroscopic directional sensitivity across canonical directions:
+$$A_{\text{normal}} = \frac{\max(\bar{\sigma}_{\text{VM}}(\varepsilon_x), \bar{\sigma}_{\text{VM}}(\varepsilon_y), \bar{\sigma}_{\text{VM}}(\varepsilon_z))}{\min(\bar{\sigma}_{\text{VM}}(\varepsilon_x), \bar{\sigma}_{\text{VM}}(\varepsilon_y), \bar{\sigma}_{\text{VM}}(\varepsilon_z))}$$
+$$A_{\text{shear}} = \frac{\max(\bar{\sigma}_{\text{VM}}(\varepsilon_{xy}), \bar{\sigma}_{\text{VM}}(\varepsilon_{yz}), \bar{\sigma}_{\text{VM}}(\varepsilon_{xz}))}{\min(\bar{\sigma}_{\text{VM}}(\varepsilon_{xy}), \bar{\sigma}_{\text{VM}}(\varepsilon_{yz}), \bar{\sigma}_{\text{VM}}(\varepsilon_{xz}))}$$
+* An isotropic medium yields $A_{\text{normal}} = 1.0$ and $A_{\text{shear}} = 1.0$.
+* Anisotropic or textured polycrystals yield $A > 1.0$, indicating preferential stiffness and stress concentration axes.
+
+---
+
+## 10. Algorithm 9: Directional Stress Analysis & Rose Diagrams of Principal Axes
+
+To characterize directional stress trajectories and angular dispersion inside heterogeneous microstructures, principal stress axes are analyzed via circular statistics and polar rose diagrams.
+
+### 10.1 Spectral Decomposition of Cauchy Stress
+For each spatial point $x$, the spectral decomposition of symmetric tensor $\boldsymbol{\sigma}(x)$ yields ordered principal stresses and unit eigenvectors:
+$$\boldsymbol{\sigma}(x) \mathbf{v}_i(x) = \sigma_i(x) \mathbf{v}_i(x), \qquad \sigma_1 \ge \sigma_2 \ge \sigma_3, \quad i \in \{1, 2, 3\}$$
+where $\mathbf{v}_1 = (v_{1x}, v_{1y}, v_{1z})$ denotes the orientation of maximum tensile principal stress.
+
+### 10.2 Planar Projection & Axial Symmetry
+In any projection plane (e.g. $XY$ azimuth):
+$$\phi = \operatorname{atan2}(v_{1y}, v_{1x}) \in [-\pi, \pi]$$
+Because stress tensor axes are headless non-directed lines ($\mathbf{v}_1 \equiv -\mathbf{v}_1$), angles map modulo $\pi$:
+$$\theta = \phi \pmod \pi \in [0, \pi)$$
+
+For standard polar rose diagram visualization, bidirectional symmetry is formed across $[0, 2\pi]$:
+$$f(\theta) = f(\theta + \pi)$$
+
+### 10.3 Stress-Weighted Angular Frequency
+Each spatial sample contributes a weight $w_i \ge 0$:
+* **Unweighted Frequency**: $w_i = 1 / N$ (spatial volume fraction).
+* **Stress-Weighted Density**: $w_i = \sigma_{\text{VM}}(x_i) / \sum_j \sigma_{\text{VM}}(x_j)$ (highlights the directional channels carrying the highest stress concentration).
+
+### 10.4 Axial Circular Statistics
+Using double-angle trigonometric moments to preserve modulo $\pi$ symmetry:
+$$\bar{C} = \frac{\sum_{i=1}^N w_i \cos(2\theta_i)}{\sum_{i=1}^N w_i}, \qquad \bar{S} = \frac{\sum_{i=1}^N w_i \sin(2\theta_i)}{\sum_{i=1}^N w_i}$$
+$$\bar{R} = \sqrt{\bar{C}^2 + \bar{S}^2} \in [0, 1]$$
+$$\bar{\theta} = \frac{1}{2} \operatorname{atan2}(\bar{S}, \bar{C}) \pmod \pi$$
+
+* **Mean Direction ($\bar{\theta}$)**: Dominant orientation axis of the stress field.
+* **Mean Resultant Length ($\bar{R}$)**: Directional concentration ($1 = \text{perfect parallel alignment}$, $0 = \text{isotropic distribution}$).
+* **Circular Dispersion**:
+  $$\delta_{\text{circ}} = 1 - \bar{R} \in [0, 1]$$
+* **Mardia–Jupp Circular Standard Deviation**:
+  $$s_{\text{circ}} = \frac{1}{2}\sqrt{-2 \ln(\max(\bar{R}, 10^{-12}))} \quad (\text{radians})$$
+

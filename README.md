@@ -136,6 +136,37 @@ Running the end-to-end prototype pipeline ([`examples/run_prototype.py`](example
 
 ---
 
+#### E. Multi-Loading Influence on von Mises Stress ($p(\sigma_{\mathrm{VM}} \mid L)$) (`figures/loading_pdf_comparison.png`)
+![Loading PDF Comparison](figures/loading_pdf_comparison.png)
+* Evaluates the conditional stress response under canonical loading conditions $L \in \{\varepsilon_x, \varepsilon_y, \varepsilon_z, \varepsilon_{xy}, \varepsilon_{xz}, \varepsilon_{yz}\}$:
+  $$p(Q \mid L) = \sum_{r=1}^M w_r p(Q \mid R=r, L)$$
+* **Normal Tension vs Shear**: Demonstrates the physical regime shift: pure normal extension produces von Mises stresses clustered at $\sim 1.1 \times 10^7$ Pa, whereas pure shear produces $\sim 1.9 \times 10^7$ Pa ($\approx 80\%$ higher equivalent stress) with broader tail quantiles ($q_{95} \approx 2.45 \times 10^7$ Pa).
+* Right panel plots cumulative distributions $F(\sigma_{\mathrm{VM}} \mid L)$ tracking stress threshold accumulation.
+
+---
+
+#### F. Directional Stress Histograms / Rose Diagrams (`figures/directional_histograms.png`)
+![Directional Histograms](figures/directional_histograms.png)
+* Evaluates the in-plane spatial trajectory of maximum tensile principal stress axes $\mathbf{v}_1(x)$:
+  * **Uniaxial Tension along X ($\varepsilon_x$)**: Lobes align horizontally along $0^\circ / 180^\circ$ (circular mean $\bar{\theta} = 0.5^\circ$, resultant length $\bar{R} = 0.987$, circular dispersion $\delta = 0.013$).
+  * **Uniaxial Tension along Y ($\varepsilon_y$)**: Lobes align vertically along $90^\circ / 270^\circ$ ($\bar{\theta} = 91.6^\circ$, $\bar{R} = 0.983$, $\delta = 0.017$).
+  * **Pure Shear ($\varepsilon_{xy}$)**: Lobes rotate diagonally along $45^\circ / 225^\circ$ ($\bar{\theta} = 44.3^\circ$, $\bar{R} = 0.988$, $\delta = 0.012$), matching the principal axis of maximum tension under shear.
+  * **Out-of-Plane Tension ($\varepsilon_z$)**: In-plane projection shows isotropic circular dispersion ($\delta = 0.958$).
+* The angular scatter around the nominal loading axis directly quantifies microstructural heterogeneity and anisotropic grain orientations.
+
+---
+
+#### G. Multi-Loading & Directional Dashboard (`figures/loading_dashboard.png`)
+![Loading Dashboard](figures/loading_dashboard.png)
+* Comprehensive overview combining:
+  * (A) Comparative PDFs $p(\sigma_{\mathrm{VM}} \mid L)$ across normal and shear loadings.
+  * (B) Cumulative distributions $F(\sigma_{\mathrm{VM}} \mid L)$.
+  * (C) Directional rose diagram under normal tension ($\varepsilon_x$).
+  * (D) Directional rose diagram under pure shear ($\varepsilon_{xy}$).
+
+---
+
+
 ## 5. Algorithmic Specifications & Mathematical Formulations
 
 A comprehensive reference is available in [ALGORITHMS.md](ALGORITHMS.md). Below is an overview of the key computational procedures:
@@ -230,12 +261,15 @@ python examples/run_prototype.py ansys_angle000.00_r0.hdf5
 pytest -v
 ```
 
-All 23 unit tests validate:
+All 29 unit tests validate:
 - 6-component $\leftrightarrow$ $3 \times 3$ symmetric tensor conversions and coordinate frame rotations ($\mathbf{R}^T \boldsymbol{\sigma} \mathbf{R}$)
 - Stress invariants ($I_1, J_2, J_3$), principal stresses ($\sigma_1 \ge \sigma_2 \ge \sigma_3$), and Lode angle conventions
 - Analytical validation of the Law of Total Variance
 - Direct ANSYS validation against `ansys_angle000.00_r0.hdf5` (`von_mises` matches ANSYS `SEQV` with 0 numerical error)
 - Backward compatibility with older MatViz3D 19-column files (`result-10-5.hdf5`) and multi-set realization ensembles
 - Copula dependence modeling and spatial autocorrelation
+- Multi-loading conditional stress analysis $p(\sigma_{\mathrm{VM}} \mid L)$ across normal, shear, and multiaxial states
+- Directional rose diagrams, principal stress eigenvectors, circular mean direction, resultant length, and dispersion
+
 
 

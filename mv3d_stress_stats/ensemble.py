@@ -173,7 +173,17 @@ class RVEEnsemble:
         sims: List[RVESimulation] = []
         for i, s in enumerate(self.sources):
             if isinstance(s, RVESimulation):
-                sims.append(s)
+                if s.file_path and s.load_step != load_step:
+                    sim = RVESimulation(
+                        source=s.file_path,
+                        set_index=s.set_index,
+                        load_step=load_step,
+                        realization_id=s.id,
+                        as_grid=(s.stress.ndim > 2),
+                    )
+                    sims.append(sim)
+                else:
+                    sims.append(s)
             else:
                 sim = RVESimulation(
                     source=s,

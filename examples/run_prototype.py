@@ -40,7 +40,14 @@ from mv3d_stress_stats import (
     plot_joint_density_2d,
     plot_spatial_autocorrelation,
     plot_summary_dashboard,
+    analyze_multiload,
+    compute_directional_histogram,
+    plot_loading_pdf_comparison,
+    plot_directional_histogram,
+    plot_multiload_directional_grid,
+    plot_loading_dashboard,
 )
+
 
 
 def get_target_file() -> Path:
@@ -213,11 +220,55 @@ def main():
     print(f"    - Effective 95% CI on mean: [{corr_res.ci_effective_95[0]:.4e}, {corr_res.ci_effective_95[1]:.4e}]")
 
     # ---------------------------------------------------------
-    # 6. Generating and Saving Visualization Plots
+    # 6. Multi-Loading Analysis: Influence of Loading on von Mises PDF (Section 23)
+    # ---------------------------------------------------------
+    print("\n[7] Multi-Loading Analysis: Effect of Loading Modes on von Mises PDF:")
+    # Check available load steps in file
+    first_sim = ensemble._get_realizations(load_step=1)[0]
+    if hasattr(first_sim, "reader") and first_sim.reader:
+        avail_steps = first_sim.reader.load_steps(first_sim.set_index)
+        canonical_steps = [s for s in [1, 2, 3, 4, 5, 6] if s in avail_steps]
+        if not canonical_steps:
+            canonical_steps = avail_steps[:6]
+    else:
+        canonical_steps = [1]
+
+    multiload_res = analyze_multiload(ensemble, quantity="von_mises", load_steps=canonical_steps, bins=80)
+    df_multi = multiload_res.to_dataframe()
+    print("    Summary Table of Stress Distributions across Loading Conditions:")
+    print(df_multi[["load_step", "text_label", "category", "mean", "std", "q50", "q95", "eta_within"]].to_string(index=False))
+
+    aniso_norm = multiload_res.anisotropy_index("normal")
+    aniso_shear = multiload_res.anisotropy_index("shear")
+    print(f"\n    - Directional Anisotropy Index (Normal Modes): {aniso_norm:.3f}")
+    print(f"    - Directional Anisotropy Index (Shear Modes):  {aniso_shear:.3f}")
+
+    # ---------------------------------------------------------
+    # 7. Directional Histograms & Principal Stress Orientations
+    # ---------------------------------------------------------
+    print("\n[8] Directional Stress Analysis & Rose Diagrams:")
+    directional_hists = {}
+    for ls in canonical_steps:
+        sim_ls = ensemble._get_realizations(load_step=ls)[0]
+        case_info = multiload_res.cases[ls]
+        dh = compute_directional_histogram(
+            sim_ls.stress,
+            plane="xy",
+            which_principal=1,
+            n_bins=36,
+            weights="von_mises",
+            symmetric=True,
+        )
+        label = f"{case_info.text_label} ({case_info.category})"
+        directional_hists[label] = dh
+        print(f"    - {label:24s}: Circular Mean = {dh.mean_direction_degrees:5.1f}°, Resultant Length R = {dh.mean_resultant_length:.4f}, Dispersion = {dh.circular_dispersion:.4f}")
+
+    # ---------------------------------------------------------
+    # 8. Generating and Saving Visualization Plots
     # ---------------------------------------------------------
     fig_dir = PROJECT_ROOT / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n[7] Generating and saving publication figures to {fig_dir}...")
+    print(f"\n[9] Generating and saving publication figures to {fig_dir}...")
 
     # (a) Ensemble PDF
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -258,6 +309,27 @@ def main():
     plt.close(fig_dash)
     print(f"    - Saved: {dash_path.name}")
 
+    # (f) Multi-Loading PDF & CDF Comparison
+    fig_mload, _ = plot_loading_pdf_comparison(multiload_res, load_steps=canonical_steps)
+    mload_path = fig_dir / "loading_pdf_comparison.png"
+    fig_mload.savefig(mload_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_mload)
+    print(f"    - Saved: {mload_path.name}")
+
+    # (g) Directional Histograms / Rose Diagrams Grid
+    fig_rose = plot_multiload_directional_grid(directional_hists, cols=3)
+    rose_path = fig_dir / "directional_histograms.png"
+    fig_rose.savefig(rose_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_rose)
+    print(f"    - Saved: {rose_path.name}")
+
+    # (h) Multi-Loading & Directional Dashboard
+    fig_ldash = plot_loading_dashboard(multiload_res, directional_hists, load_steps=canonical_steps)
+    ldash_path = fig_dir / "loading_dashboard.png"
+    fig_ldash.savefig(ldash_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_ldash)
+    print(f"    - Saved: {ldash_path.name}")
+
     print("\n" + "=" * 70)
     print(" Analysis and plot generation complete! All phases verified.")
     print("=" * 70)
@@ -265,3 +337,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

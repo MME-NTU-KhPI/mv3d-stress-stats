@@ -64,12 +64,29 @@ from mv3d_stress_stats.correlation import (
     compute_spatial_autocorrelation_3d,
     estimate_effective_sample_size,
 )
+from mv3d_stress_stats.directional import (
+    DirectionalHistogram,
+    principal_directions,
+    principal_direction_angles,
+    compute_circular_statistics,
+    compute_directional_histogram,
+)
+from mv3d_stress_stats.multiload import (
+    LoadingCaseInfo,
+    MultiloadAnalysisResult,
+    identify_loading_case,
+    analyze_multiload,
+)
 from mv3d_stress_stats.plotting import (
     plot_ensemble_pdf,
     plot_variance_decomposition,
     plot_joint_density_2d,
     plot_spatial_autocorrelation,
     plot_summary_dashboard,
+    plot_loading_pdf_comparison,
+    plot_directional_histogram,
+    plot_multiload_directional_grid,
+    plot_loading_dashboard,
 )
 
 __all__ = [
@@ -124,10 +141,26 @@ __all__ = [
     "SpatialCorrelationResult",
     "compute_spatial_autocorrelation_3d",
     "estimate_effective_sample_size",
+    # Directional
+    "DirectionalHistogram",
+    "principal_directions",
+    "principal_direction_angles",
+    "compute_circular_statistics",
+    "compute_directional_histogram",
+    # Multiload
+    "LoadingCaseInfo",
+    "MultiloadAnalysisResult",
+    "identify_loading_case",
+    "analyze_multiload",
     # Plotting
     "plot_ensemble_pdf",
     "plot_variance_decomposition",
     "plot_joint_density_2d",
     "plot_spatial_autocorrelation",
     "plot_summary_dashboard",
+    "plot_loading_pdf_comparison",
+    "plot_directional_histogram",
+    "plot_multiload_directional_grid",
+    "plot_loading_dashboard",
 ]
+

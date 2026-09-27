@@ -279,6 +279,28 @@ class RVESimulation:
             raise TypeError(f"Unsupported source type: {type(source)}")
 
     @property
+    def applied_strain(self) -> Optional[np.ndarray]:
+        """Applied macroscopic strain vector (6,) if available."""
+        return self._data.applied_strain if self._data is not None else None
+
+    def reload(self, load_step: Optional[int] = None, set_index: Optional[int] = None) -> None:
+        """Reload simulation data from HDF5 file with updated load_step or set_index."""
+        if not self.file_path:
+            raise ValueError("Cannot reload in-memory array simulation without an underlying file.")
+        if load_step is not None:
+            self.load_step = load_step
+        if set_index is not None:
+            self.set_index = set_index
+        as_grid = self.stress.ndim > 2
+        self._data = self.reader.read_stress(
+            set_index=self.set_index,
+            load_step=self.load_step,
+            as_grid=as_grid,
+        )
+        self.stress = self._data.stress
+        self.coordinates = self._data.coordinates
+
+    @property
     def num_points(self) -> int:
         """Total number of spatial integration / voxel points."""
         return int(np.prod(self.stress.shape[:-1]))
