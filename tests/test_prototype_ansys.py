@@ -91,3 +91,40 @@ def test_ansys_ensemble_with_synthetic_counterparts():
     # Check ensemble PDF is exact 1/M weighted sum of realization PDFs
     manual_sum_pdf = (res.histograms[0] + res.histograms[1] + res.histograms[2]) / 3.0
     np.testing.assert_allclose(res.ensemble_pdf, manual_sum_pdf, rtol=1e-12)
+
+
+OLDER_HDF5_PATH = Path("result-10-5.hdf5")
+
+
+@pytest.mark.skipif(not OLDER_HDF5_PATH.is_file(), reason="result-10-5.hdf5 not found")
+def test_older_matviz3d_multi_set_file():
+    """Validate backward compatibility on older MatViz3D files (19 columns, multiple sets)."""
+    reader = RVEReader(OLDER_HDF5_PATH)
+    assert len(reader.set_ids) == 100
+    
+    # Check 19-column results table
+    raw = reader.results(0, 1)
+    assert raw.shape == (1331, 19)
+    
+    # Read stress
+    data = reader.read_stress(set_index=0, load_step=1, as_grid=True)
+    assert data.stress.shape == (11, 11, 11, 6)
+    assert data.seqv_ansys is None  # Older format lacks SEQV column
+    
+    # von Mises computed via tensor invariants
+    vm = von_mises(data.stress)
+    assert vm.shape == (11, 11, 11)
+    assert np.all(vm >= 0.0)
+    
+    # Multi-realization ensemble via RVEEnsemble.from_file
+    ensemble = RVEEnsemble.from_file(OLDER_HDF5_PATH, set_indices=[0, 1, 2, 3, 4], load_step=1)
+    assert len(ensemble.sources) == 5
+    assert ensemble.rve_ids[0] == "result-10-5_s1"
+    assert ensemble.rve_ids[4] == "result-10-5_s5"
+    
+    res = ensemble.analyze(quantity="von_mises", bins=80)
+    vd = res.variance_decomposition
+    assert vd.v_total == pytest.approx(vd.v_within + vd.v_between)
+    assert vd.eta_within + vd.eta_between == pytest.approx(1.0)
+    assert vd.eta_within > 0.8  # Most variability is within-RVE spatial heterogeneity
+

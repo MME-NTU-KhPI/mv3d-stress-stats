@@ -139,6 +139,31 @@ class RVEEnsemble:
                 else:
                     self.rve_ids.append(f"rve_{i}")
 
+    @classmethod
+    def from_file(
+        cls,
+        file_path: Union[str, Path],
+        set_indices: Optional[Sequence[int]] = None,
+        load_step: int = 1,
+        as_grid: bool = False,
+        weights: Optional[Sequence[float]] = None,
+    ) -> RVEEnsemble:
+        """Create an RVEEnsemble from sets within a single HDF5 file (e.g. multi-realization runs)."""
+        from mv3d_stress_stats.reader import RVEReader
+        reader = RVEReader(file_path)
+        if set_indices is None:
+            set_indices = list(range(len(reader.set_ids)))
+        sims = [
+            RVESimulation(
+                source=file_path,
+                set_index=idx,
+                load_step=load_step,
+                as_grid=as_grid,
+            )
+            for idx in set_indices
+        ]
+        return cls(sources=sims, weights=weights)
+
     def _get_realizations(
         self,
         set_index: int = 0,

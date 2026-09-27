@@ -80,9 +80,22 @@ class RVEReader:
                 if field in grp:
                     val = grp[field][()]
                     if isinstance(val, (bytes, np.bytes_)):
-                        val = val.decode("utf-8", errors="replace")
+                        val = val.decode("utf-8", errors="replace").rstrip("\x00")
+                    elif isinstance(val, np.ndarray) and val.dtype in (np.int8, np.uint8):
+                        val = bytes(val).decode("utf-8", errors="replace").rstrip("\x00")
                     meta[field] = val
         return meta
+
+    def results(self, set_index: int = 0, load_step: int = 1) -> np.ndarray:
+        """Raw per-voxel table from results dataset, shape (N, n_cols)."""
+        if not self.set_ids:
+            raise ValueError(f"No set groups found in {self.file_path}")
+        set_id = self.set_ids[set_index]
+        with h5py.File(self.file_path, "r") as f:
+            ls_key = f"{set_id}/ls_{load_step}"
+            if ls_key not in f:
+                raise KeyError(f"Load step '{ls_key}' not found in {self.file_path}")
+            return f[ls_key]["results"][:]
 
     def read_stress(
         self,

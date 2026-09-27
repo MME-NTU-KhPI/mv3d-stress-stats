@@ -41,10 +41,11 @@ mv3d_stress_stats/
 
 ### Basic Analysis Example
 
+#### A. Multiple RVE Files (1 realization per file)
 ```python
 from mv3d_stress_stats import RVEEnsemble, RVESimulation
 
-# 1. Define ensemble of RVE realizations
+# 1. Define ensemble from multiple HDF5 files
 ensemble = RVEEnsemble(
     sources=["ansys_angle000.00_r0.hdf5", "ansys_angle000.00_r1.hdf5"],
     weights=[0.5, 0.5],
@@ -67,6 +68,29 @@ print(vd.summary())
 df_stats = result.to_dataframe()
 print(df_stats)
 ```
+
+#### B. Single File with Multiple Realization Sets (Older or Batch MatViz3D Runs)
+```python
+# Automatically loads sets (e.g. set 1..5) as distinct realizations
+ensemble = RVEEnsemble.from_file(
+    "result-10-5.hdf5",
+    set_indices=[0, 1, 2, 3, 4],  # or omit to load all available sets
+    load_step=1,
+)
+
+result = ensemble.analyze(quantity="von_mises", bins=100)
+print(result.variance_decomposition.summary())
+```
+
+---
+
+### Format & Version Compatibility
+
+The framework automatically accommodates different MatViz3D file versions:
+* **Current MatViz3D (22 columns)**: Contains precomputed ANSYS equivalent stress `SEQV` at column index 20. Stresses match tensor invariants exactly.
+* **Older MatViz3D (19 columns, e.g. `result-10-5.hdf5`)**: Tables contain `ID, X, Y, Z, UX, UY, UZ, SX, SY, SZ, SXY, SYZ, SXZ, EpsX..XZ` without `SEQV`. The framework seamlessly calculates $\sigma_{\text{VM}} = \sqrt{3J_2}$ directly from the 6 stress components.
+* **Arbitrary Grid Sizes**: Dynamically handles any grid resolution (e.g. $11 \times 11 \times 11$, $25 \times 25 \times 25$, or non-cubic grids) without hardcoded dimensions.
+
 
 ---
 
@@ -193,7 +217,12 @@ Integration points inside an RVE are spatially correlated; therefore $N_{\text{p
 
 ### Execute Prototype Analysis & Generate Figures
 ```bash
+# Auto-detects available HDF5 file (result-10-5.hdf5 or ansys_angle000.00_r0.hdf5):
 python examples/run_prototype.py
+
+# Or specify any target HDF5 file explicitly:
+python examples/run_prototype.py result-10-5.hdf5
+python examples/run_prototype.py ansys_angle000.00_r0.hdf5
 ```
 
 ### Run Full Test Suite
@@ -201,10 +230,12 @@ python examples/run_prototype.py
 pytest -v
 ```
 
-All 22 unit tests validate:
+All 23 unit tests validate:
 - 6-component $\leftrightarrow$ $3 \times 3$ symmetric tensor conversions and coordinate frame rotations ($\mathbf{R}^T \boldsymbol{\sigma} \mathbf{R}$)
 - Stress invariants ($I_1, J_2, J_3$), principal stresses ($\sigma_1 \ge \sigma_2 \ge \sigma_3$), and Lode angle conventions
 - Analytical validation of the Law of Total Variance
 - Direct ANSYS validation against `ansys_angle000.00_r0.hdf5` (`von_mises` matches ANSYS `SEQV` with 0 numerical error)
+- Backward compatibility with older MatViz3D 19-column files (`result-10-5.hdf5`) and multi-set realization ensembles
 - Copula dependence modeling and spatial autocorrelation
+
 

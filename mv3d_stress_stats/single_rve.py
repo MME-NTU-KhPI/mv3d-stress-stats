@@ -244,8 +244,15 @@ class RVESimulation:
         
         if isinstance(source, (str, Path)):
             self.file_path = str(source)
-            self.id = realization_id or Path(source).stem
             self.reader = RVEReader(source)
+            if realization_id:
+                self.id = realization_id
+            elif len(self.reader.set_ids) > 1:
+                cur_set = self.reader.set_ids[set_index] if set_index < len(self.reader.set_ids) else str(set_index)
+                self.id = f"{Path(source).stem}_s{cur_set}"
+            else:
+                self.id = Path(source).stem
+
             self._data = self.reader.read_stress(
                 set_index=set_index,
                 load_step=load_step,
