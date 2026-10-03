@@ -23,6 +23,7 @@ from mv3d_stress_stats.single_rve import (
     compute_kde,
 )
 from mv3d_stress_stats.invariants import resolve_quantity
+from mv3d_stress_stats.modality import ModalityResult, detect_modality as _detect_modality
 
 
 @dataclass
@@ -71,6 +72,13 @@ class EnsembleAnalysisResult:
     kde_eval_points: Optional[np.ndarray] = None
     rve_kdes: Optional[List[np.ndarray]] = None
     ensemble_kde: Optional[np.ndarray] = None
+    # Optional load-magnitude normalization: eta(x) = Q_local(x) / Q(macro_stress_r)
+    # per realization r. None unless analyze(normalize=True) was used.
+    is_normalized: bool = False
+    macro_scalar_values: Optional[np.ndarray] = None  # per-RVE Q(sigma_bar_r), pre-normalization scale
+    # Optional modality diagnostics (peak count + GMM-BIC) on the ensemble KDE.
+    # None unless analyze(detect_modality=True) was used.
+    modality: Optional[ModalityResult] = None
     # Reproducibility metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -240,6 +248,9 @@ class RVEEnsemble:
         kde: bool = False,
         kde_points: int = 200,
         kde_bandwidth: Optional[Union[float, str]] = None,
+        normalize: bool = False,
+        normalize_min_zscore: float = 3.0,
+        detect_modality: bool = False,
     ) -> EnsembleAnalysisResult:
         """Run complete statistical analysis for a scalar quantity across the ensemble.
         
@@ -252,6 +263,38 @@ class RVEEnsemble:
             kde: If True, computes common-grid KDE for each realization and ensemble mixture.
             kde_points: Number of points on common grid for KDE.
             kde_bandwidth: Optional KDE bandwidth parameter.
+            normalize: If True, divide each realization's local values by that
+                realization's own homogenized macro value, eta(x) = Q_local(x) /
+                Q(sigma_bar_r), BEFORE computing statistics/histogram/KDE. This
+                is exact (not approximate) under linear elasticity, since both
+                sides scale identically with load amplitude -- it removes load
+                magnitude as a variable so different loading amplitudes along
+                the same direction become comparable/poolable. It does NOT
+                collapse direction into one axis: different loading directions
+                still generally give different eta-distributions. Requires
+                quantity to be positively homogeneous of degree 1 in stress
+                (true for von_mises, pressure magnitude, principal stresses;
+                NOT true for e.g. a squared invariant) for the exact identity
+                to hold. See normalize_eps for the near-zero-macro guard.
+            normalize_min_zscore: if normalize=True, a realization's macro
+                value Q(sigma_bar_r) is treated as zero (ValueError raised
+                instead of dividing by it) when it is not statistically
+                distinguishable from zero given that realization's own
+                spatial sampling noise: z = |Q(sigma_bar_r)| / (local_std /
+                sqrt(n_points)) < normalize_min_zscore. This is deliberately a
+                significance test, not a fixed fraction of the local scale --
+                a fixed fraction can't tell "small but real" apart from "noise
+                around zero" (e.g. normalizing a signed component like SX
+                under a loading mode whose macro SX is zero by symmetry, pure
+                shear, typically lands around z~1, i.e. indistinguishable from
+                its own sampling noise, regardless of how many spatial points
+                are used). Pick an unsigned/invariant quantity or leave
+                normalize=False for that case.
+            detect_modality: If True (requires kde=True), runs peak-counting
+                and (if scikit-learn is installed) GMM-BIC on the ensemble KDE
+                and attaches the result as `modality`. This is a diagnostic
+                only -- it never changes the computed PDF/KDE itself, so a
+                genuine second mode is never smoothed away by this flag.
             
         Returns:
             EnsembleAnalysisResult containing all statistics, decomposition, and PDFs.
@@ -260,7 +303,12 @@ class RVEEnsemble:
         q_fn = resolve_quantity(quantity)
         q_name = quantity if isinstance(quantity, str) else getattr(quantity, "__name__", "custom_quantity")
 
-        # 1. Extract values for each RVE
+        # 1. Extract raw (un-normalized) values for each RVE first. The guard
+        # for normalize=True needs these: it compares a realization's macro
+        # value against the SPREAD of that realization's own local field, not
+        # against other realizations' macro values (with few realizations --
+        # often just one -- cross-realization comparison is meaningless or,
+        # worse, silently self-referential and never fires).
         rve_values: List[np.ndarray] = []
         rve_stats: List[RVEStatistics] = []
         for sim in sims:
@@ -268,6 +316,31 @@ class RVEEnsemble:
             vals = vals[np.isfinite(vals)]
             rve_values.append(vals)
             rve_stats.append(compute_statistics(vals))
+
+        # 1b. Optional per-realization normalization by homogenized macro value.
+        macro_scalar_values: Optional[np.ndarray] = None
+        if normalize:
+            macro_stresses = np.array([sim.homogenized_stress() for sim in sims])  # (M, 6)
+            macro_scalar_values = q_fn(macro_stresses)  # (M,) -- Q(sigma_bar_r) per realization
+            for i, m in enumerate(macro_scalar_values):
+                n_pts = len(rve_values[i])
+                local_std = float(np.std(rve_values[i])) if n_pts else 0.0
+                standard_error = local_std / np.sqrt(n_pts) if n_pts > 0 else 0.0
+                z = abs(m) / standard_error if standard_error > 0 else np.inf
+                if z < normalize_min_zscore:
+                    raise ValueError(
+                        f"Cannot normalize: realization {i}'s macro '{q_name}' ({m:.3e}) is not "
+                        f"statistically distinguishable from zero given its own spatial sampling "
+                        f"noise (z={z:.2f}, standard error={standard_error:.3e} over {n_pts} points), "
+                        "which would blow up eta(x)=Q_local/Q_macro. This usually means the "
+                        "quantity is signed and vanishes by symmetry for this loading mode "
+                        "(e.g. macro SX under pure shear). Use an unsigned/invariant quantity "
+                        "(e.g. von_mises) or normalize=False."
+                    )
+            for i in range(len(rve_values)):
+                rve_values[i] = rve_values[i] / macro_scalar_values[i]
+            # rve_stats must describe the now-normalized values, not the raw ones.
+            rve_stats = [compute_statistics(v) for v in rve_values]
 
         # 2. Variance decomposition
         var_decomp = self.decompose_variance(rve_values)
@@ -317,6 +390,19 @@ class RVEEnsemble:
                 rve_kdes.append(k_val)
                 ensemble_kde_vals += w * k_val
 
+        # 6b. Optional modality diagnostic on the ensemble KDE (does not alter it)
+        modality_result: Optional[ModalityResult] = None
+        if detect_modality:
+            if not kde:
+                raise ValueError("detect_modality=True requires kde=True.")
+            # Peak-counting runs on the properly weighted ensemble_kde_vals curve.
+            # GMM-BIC fits raw pooled points (unweighted by realization weight --
+            # fine for equal/near-equal weights, an approximation otherwise).
+            pooled_vals = np.concatenate(rve_values) if rve_values else np.array([])
+            modality_result = _detect_modality(
+                pooled_vals, kde_eval_points=kde_eval_pts, kde_values=ensemble_kde_vals
+            )
+
         # 7. Reproducibility metadata
         metadata = {
             "quantity": q_name,
@@ -326,10 +412,11 @@ class RVEEnsemble:
             "num_spatial_points_per_rve": [len(v) for v in rve_values],
             "bin_range": actual_range,
             "num_bins": len(bin_centers),
+            "normalized": normalize,
         }
 
         return EnsembleAnalysisResult(
-            quantity_name=q_name,
+            quantity_name=(f"{q_name}/Q_macro" if normalize else q_name),
             load_step=load_step,
             set_index=set_index,
             weights=self.weights,
@@ -344,6 +431,9 @@ class RVEEnsemble:
             kde_eval_points=kde_eval_pts,
             rve_kdes=rve_kdes,
             ensemble_kde=ensemble_kde_vals,
+            is_normalized=normalize,
+            macro_scalar_values=macro_scalar_values,
+            modality=modality_result,
             metadata=metadata,
         )
 
@@ -386,3 +476,51 @@ class RVEEnsemble:
             res["macro_scalar_std"] = float(np.sqrt(var_scalar))
 
         return res
+
+
+def rescale_eta_distribution(
+    eta_grid: np.ndarray,
+    eta_density: np.ndarray,
+    macro_value: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Invert the eta = Q_local / Q_macro normalization for one real point.
+
+    Given a normalized distribution p_eta(eta) (e.g. EnsembleAnalysisResult.
+    ensemble_kde from an analyze(normalize=True) call) and a known macro value
+    Q_macro at some point of a real object, recovers the absolute local
+    distribution via a change of variables:
+
+        p(Q = q) = (1 / |Q_macro|) * p_eta(q / Q_macro)
+
+    This is EXACT (not approximate), under the same conditions analyze(
+    normalize=True) relies on: linear elasticity, and the loading state at
+    that real point is a scalar multiple of the loading direction the
+    eta-distribution was characterized for.
+
+    For a point whose loading state is a general multiaxial combination not
+    aligned with any single characterized direction, this scalar rescaling is
+    only an approximation (Q is nonlinear in the stress tensor, so per-
+    direction scalar PDFs do not combine linearly even though the underlying
+    stress tensors do). For that case, combine the stress TENSORS linearly
+    first (each already scales exactly with load amplitude), then recompute
+    the invariant/quantity -- see directional_kde_field() in multiload.py and
+    the joint-invariant tools in joint.py for the building blocks.
+
+    Args:
+        eta_grid: the normalized quantity's evaluation grid (e.g. kde_eval_points
+            from a normalize=True analyze() call).
+        eta_density: p_eta values on that grid (e.g. ensemble_kde from the same call).
+        macro_value: Q_macro at the real point of interest (same quantity, same units).
+
+    Returns:
+        (q_grid, q_density): the rescaled absolute grid and density, still
+        integrating to 1 over q_grid.
+    """
+    if macro_value == 0:
+        raise ValueError(
+            "macro_value is 0 -- cannot rescale back to an absolute distribution "
+            "(the real point has no loading in this quantity along this direction)."
+        )
+    q_grid = eta_grid * macro_value
+    q_density = eta_density / abs(macro_value)
+    return q_grid, q_density

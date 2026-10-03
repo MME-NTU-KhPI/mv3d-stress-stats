@@ -278,6 +278,59 @@ def plot_loading_pdf_comparison(
 
 
 
+def plot_directional_kde_field(
+    multiload_result: MultiloadAnalysisResult,
+    cut_labels: Optional[Sequence[str]] = None,
+    figsize: Tuple[int, int] = (12, 5),
+) -> Tuple[plt.Figure, Tuple[plt.Axes, plt.Axes]]:
+    """Visualize how p(Q | L) changes across loading directions.
+
+    Requires multiload_result to come from analyze_multiload(..., kde=True,
+    shared_range=True) so all directions share one Q grid.
+
+    Panels:
+        Left:  full field -- direction (categorical) x Q x density, as a heatmap.
+        Right: explicit 1D cuts p(Q | L) at the requested directions
+               (default: all of them), pulled directly from the same field.
+    """
+    labels, q_grid, field = multiload_result.directional_kde_field()
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+    # Left: full field as a heatmap, directions on x as categorical ticks.
+    # 'nearest' shading (discrete blocks) is used deliberately: unlike a
+    # continuous scatter-angle sweep, adjacent columns here (e.g. eps_x next
+    # to eps_xy) are unrelated loading modes, so interpolating between them
+    # would visually imply a continuity that doesn't exist.
+    im = ax1.pcolormesh(
+        np.arange(len(labels)), q_grid, field.T, shading="nearest", cmap="viridis"
+    )
+    ax1.set_xticks(np.arange(len(labels)))
+    ax1.set_xticklabels(labels, rotation=45, ha="right")
+    q_name = multiload_result.quantity
+    ax1.set_ylabel(f"{q_name.replace('_', ' ').title()} (Pa)")
+    ax1.set_title(r"Full field: $p(Q \mid L)$ across directions")
+    fig.colorbar(im, ax=ax1, label="density")
+
+    # Right: explicit cuts
+    cuts = list(cut_labels) if cut_labels is not None else labels
+    cmap = plt.get_cmap("plasma")
+    for j, lbl in enumerate(cuts):
+        if lbl not in labels:
+            continue
+        i = labels.index(lbl)
+        color = cmap(j / max(len(cuts) - 1, 1))
+        ax2.plot(q_grid, field[i], color=color, linewidth=2.0, label=lbl)
+    ax2.set_xlabel(f"{q_name.replace('_', ' ').title()} (Pa)")
+    ax2.set_ylabel("Probability Density")
+    ax2.set_title(r"Cuts: $p(Q \mid L)$ at selected directions")
+    ax2.legend(frameon=True, fontsize=9)
+    ax2.grid(True, linestyle=":", alpha=0.6)
+
+    plt.tight_layout()
+    return fig, (ax1, ax2)
+
+
 def plot_directional_histogram(
     dir_hist: DirectionalHistogram,
     title: Optional[str] = None,

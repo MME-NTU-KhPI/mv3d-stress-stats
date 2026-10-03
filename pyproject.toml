@@ -23,6 +23,9 @@ dependencies = [
 test = [
     "pytest>=7.0.0",
 ]
+modality = [
+    "scikit-learn>=1.3.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

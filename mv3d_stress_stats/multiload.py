@@ -8,7 +8,7 @@ density function, dispersion, and variance decomposition of stress quantities.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
@@ -101,7 +101,7 @@ class MultiloadAnalysisResult:
         for ls, case in self.cases.items():
             res = self.results[ls]
             vd = res.variance_decomposition
-            rows.append({
+            row = {
                 "load_step": ls,
                 "label": case.label,
                 "text_label": case.text_label,
@@ -115,8 +115,47 @@ class MultiloadAnalysisResult:
                 "v_total": vd.v_total,
                 "eta_within": vd.eta_within,
                 "eta_between": vd.eta_between,
-            })
+                "normalized": res.is_normalized,
+            }
+            if res.modality is not None:
+                row["n_modes_peaks"] = res.modality.n_modes_peaks
+                row["is_multimodal"] = res.modality.is_multimodal
+                row["gmm_n_components"] = res.modality.gmm_n_components
+            rows.append(row)
         return pd.DataFrame(rows)
+
+    def directional_kde_field(self) -> "Tuple[List[str], np.ndarray, np.ndarray]":
+        """Stack per-load-step ensemble KDEs into a (direction x Q) density field.
+
+        Requires analyze_multiload(..., kde=True, shared_range=True) so every
+        load step's KDE was evaluated on the same Q grid -- otherwise the rows
+        of the returned matrix would not be directly comparable/stackable.
+
+        Returns:
+            labels: one text label per load step (direction), e.g. "eps_x".
+            q_grid: (n_points,) shared quantity grid.
+            density_field: (n_directions, n_points) array; row i is p(Q | L=labels[i]).
+        """
+        labels: List[str] = []
+        q_grid: Optional[np.ndarray] = None
+        rows: List[np.ndarray] = []
+        for ls, case in self.cases.items():
+            res = self.results[ls]
+            if res.ensemble_kde is None or res.kde_eval_points is None:
+                raise ValueError(
+                    f"Load step {ls} has no KDE. Re-run analyze_multiload(..., kde=True)."
+                )
+            if q_grid is None:
+                q_grid = res.kde_eval_points
+            elif not np.allclose(q_grid, res.kde_eval_points):
+                raise ValueError(
+                    f"Load step {ls} was evaluated on a different Q grid than the others. "
+                    "Re-run analyze_multiload(..., shared_range=True) so all directions "
+                    "share one grid before stacking them into a field."
+                )
+            labels.append(case.text_label)
+            rows.append(res.ensemble_kde)
+        return labels, q_grid, np.asarray(rows)
 
     def anisotropy_index(self, category: str = "normal") -> float:
         """Compute directional anisotropy index for the given loading category.
@@ -140,6 +179,9 @@ def analyze_multiload(
     load_steps: Optional[Sequence[int]] = None,
     bins: int = 100,
     kde: bool = True,
+    shared_range: bool = True,
+    normalize: bool = False,
+    detect_modality: bool = False,
 ) -> MultiloadAnalysisResult:
     """Analyze stress distribution across multiple loading conditions.
     
@@ -150,6 +192,25 @@ def analyze_multiload(
                     If None, evaluates the canonical first 6 steps or all available.
         bins: Number of histogram bins.
         kde: Whether to compute kernel density estimation.
+        shared_range: If True (default), first probes every load step to find a
+                       single global (min, max) for `quantity`, then reuses that
+                       range as `bin_range` for every load step's histogram/KDE.
+                       This is required for directional_kde_field()/cut plots to
+                       be meaningful -- without it, each direction gets its own
+                       independently auto-ranged grid and the per-direction
+                       densities cannot be stacked or compared point-for-point.
+                       Individual overlaid-line comparisons (e.g.
+                       plot_loading_pdf_comparison) still work fine either way.
+        normalize: If True, each direction's values are normalized to
+                       eta = Q_local / Q_macro before histogram/KDE/stats are
+                       computed (see RVEEnsemble.analyze(normalize=...) for the
+                       exact definition and its elastic-linearity requirement).
+                       This makes different loading AMPLITUDES along the same
+                       direction comparable; it does not collapse direction
+                       itself -- directional_kde_field() still varies by L.
+        detect_modality: If True (forces kde=True), attaches a ModalityResult
+                       (peak count + GMM-BIC) to each load step's result and
+                       to to_dataframe()'s output, without altering the PDF/KDE.
         
     Returns:
         MultiloadAnalysisResult with per-loading statistical distributions.
@@ -178,10 +239,32 @@ def analyze_multiload(
             
     cases: Dict[int, LoadingCaseInfo] = {}
     results: Dict[int, EnsembleAnalysisResult] = {}
-    
+
+    global_range: Optional[Tuple[float, float]] = None
+    if shared_range:
+        # Cheap probe pass (no histogram/KDE) just to learn each direction's
+        # (min, max) -- in the SAME units the final pass will use (normalized
+        # eta if normalize=True) -- so we can pick one grid that covers all of them.
+        mins, maxs = [], []
+        for ls in load_steps:
+            probe = ensemble.analyze(
+                quantity=quantity, load_step=ls, bins=2, kde=False, normalize=normalize
+            )
+            mins.append(min(s.min for s in probe.rve_stats))
+            maxs.append(max(s.max for s in probe.rve_stats))
+        global_range = (float(min(mins)), float(max(maxs)))
+
     for ls in load_steps:
         # Materialize realization at load_step ls
-        res = ensemble.analyze(quantity=quantity, load_step=ls, bins=bins, kde=kde)
+        res = ensemble.analyze(
+            quantity=quantity,
+            load_step=ls,
+            bins=bins,
+            bin_range=global_range,
+            kde=kde,
+            normalize=normalize,
+            detect_modality=detect_modality,
+        )
         results[ls] = res
         
         # Extract applied strain from first realization
