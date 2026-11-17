@@ -18,6 +18,7 @@ import os
 import clr
 
 clr.AddReference("System")
+from System import Array, Double
 from System.Diagnostics import Process, ProcessStartInfo
 
 
@@ -46,6 +47,12 @@ def _prop(result, name):
             p = None
         if p is not None:
             return p.Value
+    try:  # fallback: search the flattened property list by name
+        for p in result.AllProperties:
+            if p.Name == name or str(p.Name).endswith("/" + name):
+                return p.Value
+    except Exception:
+        pass
     raise Exception("RVEStressStats: property '%s' not found" % name)
 
 
@@ -128,7 +135,7 @@ def _evaluate(result, stepInfo, collector, column, probs, thresholds):
     workdir = os.path.join(result.Analysis.WorkingDir, "RVEStressStats")
     if not os.path.isdir(workdir):
         os.makedirs(workdir)
-    tag = "%s_set%s" % (result.ObjectId, stepInfo.Set)
+    tag = "%s_set%s" % (result.Id, stepInfo.Set)
     nodes_csv = os.path.join(workdir, "nodes_%s.csv" % tag)
     out_csv = os.path.join(workdir, "stats_%s.csv" % tag)
 
@@ -146,7 +153,7 @@ def _evaluate(result, stepInfo, collector, column, probs, thresholds):
 
     values = read_stats_csv(out_csv, column)
     for nid in node_ids:
-        collector.SetValues(nid, [values[nid]])
+        collector.SetValues(nid, Array[Double]([values[nid]]))
 
 
 # ------------------------------------------------------------------ results

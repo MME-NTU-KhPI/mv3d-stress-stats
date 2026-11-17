@@ -325,7 +325,9 @@ Input `node_id,X,Y,Z,XY,YZ,XZ`; output one row per node with `q_macro, mean, std
 
 Files: `act/RVEStressStats.xml` and `act/RVEStressStats/` (`main.py` — Mechanical callbacks, `rve_bridge.py` — pure helpers shared with the tests, `images/`).
 
-**Install (Mechanical 2025 R2):**
+**Install (Mechanical 2025 R2):** step-by-step guide in Ukrainian: [`act/INSTALL_uk.md`](act/INSTALL_uk.md).
+
+**Install, short version:**
 1. Copy `act/RVEStressStats.xml` and the folder `act/RVEStressStats/` into `%APPDATA%\Ansys\v252\ACT\extensions\`.
 2. Workbench → *Extensions → Manage Extensions* → tick **RVEStressStats** (scripted extension, *Load as default* if wanted).
 3. A CPython with `numpy`, `h5py`, `matplotlib` must exist. Either `pip install -e .` this repository into it, or set the result property *Package folder* to the repository root (added to `PYTHONPATH`).
@@ -341,4 +343,4 @@ Common properties: *Geometry* (scoping), *Basis HDF5 file*, *Set indices*, *Pyth
 
 On evaluation the extension reads the macro state at the scoped nodes for the displayed result set, writes `nodes_<object>_set<n>.csv` into `<solver files>/RVEStressStats/`, runs `python -m mv3d_stress_stats.node_cli`, and maps the returned column onto the nodes. CLI errors are raised in Mechanical with the Python stderr text; stdout goes to the ACT log.
 
-**Assumptions:** linear-elastic RVEs (superposition), macro model material = homogenized RVE material, nodal-averaged macro results. The extension has been tested outside Mechanical (helpers, command-line quoting, the full CSV → process → CSV round trip); the Mechanical-side API calls (`GetResultsData`, `CurrentConsistentUnitFromQuantityName`, `collector.SetValues`) still need a check in a live session.
+**Assumptions:** linear-elastic RVEs (superposition), macro model material = homogenized RVE material, nodal-averaged macro results. Every Mechanical API member used by `main.py` is confirmed in the ACT 2025 R2 interface docs shipped with ANSYS, and the callbacks are executed in CPython against mocked Mechanical objects with the real CLI process (`tests/test_act_main_mock.py`); a check in a live Mechanical session is still outstanding.
