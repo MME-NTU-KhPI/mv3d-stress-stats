@@ -166,6 +166,25 @@ Running the end-to-end prototype pipeline ([`examples/run_prototype.py`](example
 
 ---
 
+#### H. Stress Component Pair-Plane Angular PDF Sections (`figures/pair_plane_sections_grid.png`)
+![Pair Plane Sections Grid](figures/pair_plane_sections_grid.png)
+* Evaluates angular stress sections across component pair planes $(X, Y)$ including $(S_x, S_y)$, $(S_y, S_z)$, $(S_x, S_z)$, $(S_x, S_{xy})$, $(S_y, S_{yz})$, and $(S_z, S_{xz})$.
+* **Horizontal Axis (x-axis)**: Fluctuation orientation angle $\theta = \operatorname{arctan2}(\Delta Y, \Delta X)$ spanning $[-180^\circ, +180^\circ]$.
+* **Vertical Axis (y-axis)**: Probability density value ($f(r\cos\theta, r\sin\theta)$ or conditional angular PDF $p(\theta \mid R=r)$).
+* **Color Mapping**: Radial stress fluctuation levels $\Delta r = \sqrt{\Delta X^2 + \Delta Y^2}$ (evaluated at quantiles $q_{10}, q_{25}, q_{50}, q_{75}, q_{90}$ or explicit radii) are mapped to a continuous colormap (e.g. `plasma` or `viridis`) with colorbar.
+* Normal-normal planes capture multiaxial stress ratios, while normal-shear planes quantify shear concentration relative to principal normal stresses.
+
+---
+
+#### I. 2D Polar Heatmap with Horizontal Reference Lines (`figures/pair_plane_polar_heatmap.png`)
+![Pair Plane Polar Heatmap](figures/pair_plane_polar_heatmap.png)
+* Unrolls the 2D joint fluctuation probability density into polar coordinates $(\theta, \Delta r)$:
+  * **Horizontal Axis (x-axis)**: Fluctuation orientation angle $\theta = \operatorname{arctan2}(\Delta S_y, \Delta S_x)$ covering the complete interval $[-180^\circ, +180^\circ]$.
+  * **Vertical Axis (y-axis)**: Fluctuation radius $\Delta r = \sqrt{(\Delta S_x)^2 + (\Delta S_y)^2}$ (Pa).
+  * **Color / Shading**: Continuous joint fluctuation density $f(\Delta r \cos\theta, \Delta r \sin\theta)$ evaluated via 2D Gaussian KDE.
+  * **Horizontal Reference Lines**: Because constant fluctuation radii form horizontal circles in $(\theta, \Delta r)$ space, horizontal dashed white lines mark the discrete section cuts ($q_{10}, q_{25}, q_{50}, q_{75}, q_{90}$), and a cyan solid line marks the mean fluctuation radius across all angle intervals.
+
+---
 
 ## 5. Algorithmic Specifications & Mathematical Formulations
 
@@ -261,7 +280,7 @@ python examples/run_prototype.py ansys_angle000.00_r0.hdf5
 pytest -v
 ```
 
-All 29 unit tests validate:
+The unit tests (62 at the time of writing) validate:
 - 6-component $\leftrightarrow$ $3 \times 3$ symmetric tensor conversions and coordinate frame rotations ($\mathbf{R}^T \boldsymbol{\sigma} \mathbf{R}$)
 - Stress invariants ($I_1, J_2, J_3$), principal stresses ($\sigma_1 \ge \sigma_2 \ge \sigma_3$), and Lode angle conventions
 - Analytical validation of the Law of Total Variance
@@ -273,3 +292,53 @@ All 29 unit tests validate:
 
 
 
+- Localization superposition: every FE load step of `result-10-5.hdf5` is reproduced from the 6 unit cases; ACT bridge helpers, basis cache and stress units
+
+---
+
+## 7. Local Stress Distribution at a Macro Node & ANSYS Mechanical (ACT)
+
+### 7.1 Why superposition, not rescaling
+
+For a linear-elastic RVE the local stress is linear in the macro strain, so six unit load cases give, for every point $x$ of every realization $r$, a $6\times6$ localization operator
+
+$$\boldsymbol{\sigma}^{(r)}(x) = \mathbf{A}^{(r)}(x)\,\boldsymbol{\varepsilon}_{\text{macro}}, \qquad p(Q\mid\text{node}) = \sum_r w_r\, p\big(Q\mid R=r,\ \boldsymbol{\varepsilon}_{\text{macro}}\big).$$
+
+Rescaling a scalar PDF ($\eta = Q/Q_{\text{macro}}$) from one loading direction is wrong for multiaxial states because $Q=g(\boldsymbol\sigma)$ is nonlinear (KS distance to FE up to 0.34 for hydrostatic stress, see `figures/node_distribution/superposition_validation.png`). Strains use the **engineering** shear convention (ANSYS `EPEL`, MatViz3D `C_matrix`); `eps_as_loading` in the HDF5 stores tensor shear and is converted automatically.
+
+```python
+from mv3d_stress_stats.localization import LocalizationBasis
+basis = LocalizationBasis.from_file_cached("result-10-5.hdf5")   # .npz cache: 8 s -> 0.05 s
+nd = basis.node_distribution("von_mises", macro_stress=[60e6, 20e6, -10e6, 15e6, 0, 5e6])
+nd.quantiles([0.05, 0.95]), nd.exceedance(80e6)
+```
+
+### 7.2 Command-line bridge
+
+```bash
+python -m mv3d_stress_stats.node_cli --basis result-10-5.hdf5 --input nodes.csv --kind stress --stress-unit MPa --quantity von_mises --probs 0.05,0.5,0.95 --thresholds 80 --out node_stats.csv --plot-nodes 12
+```
+
+Input `node_id,X,Y,Z,XY,YZ,XZ`; output one row per node with `q_macro, mean, std, min, max, q<p>…, P_gt_<t>…`. `--stress-unit` applies to input stresses, thresholds and stress-like outputs ($J_2$ as unit², $J_3$ as unit³; triaxiality/Lode dimensionless).
+
+### 7.3 ACT extension `RVEStressStats`
+
+Files: `act/RVEStressStats.xml` and `act/RVEStressStats/` (`main.py` — Mechanical callbacks, `rve_bridge.py` — pure helpers shared with the tests, `images/`).
+
+**Install (Mechanical 2025 R2):**
+1. Copy `act/RVEStressStats.xml` and the folder `act/RVEStressStats/` into `%APPDATA%\Ansys\v252\ACT\extensions\`.
+2. Workbench → *Extensions → Manage Extensions* → tick **RVEStressStats** (scripted extension, *Load as default* if wanted).
+3. A CPython with `numpy`, `h5py`, `matplotlib` must exist. Either `pip install -e .` this repository into it, or set the result property *Package folder* to the repository root (added to `PYTHONPATH`).
+
+**Use:** after solving, the *RVE statistics* toolbar adds two result objects:
+
+| Object | Shows | Key properties |
+|---|---|---|
+| RVE stress statistic | Quantile / Mean / Std / Min / Max / Q(macro) of $p(Q\mid\text{node})$ in stress units | Quantile level, Quantity |
+| RVE exceedance probability | $P(Q>t\mid\text{node})$ | Threshold (solver stress unit) |
+
+Common properties: *Geometry* (scoping), *Basis HDF5 file*, *Set indices*, *Python executable*, *Package folder*, *Macro state* (`EPEL` — recommended, needs no $C_{\text{eff}}$; or `S`, converted with $C_{\text{eff}}^{-1}$), *Solver stress unit* (`Auto` reads the solver unit system), *Plot p(Q|node) for node IDs* (PNG files in `<solver files>/RVEStressStats/plots`).
+
+On evaluation the extension reads the macro state at the scoped nodes for the displayed result set, writes `nodes_<object>_set<n>.csv` into `<solver files>/RVEStressStats/`, runs `python -m mv3d_stress_stats.node_cli`, and maps the returned column onto the nodes. CLI errors are raised in Mechanical with the Python stderr text; stdout goes to the ACT log.
+
+**Assumptions:** linear-elastic RVEs (superposition), macro model material = homogenized RVE material, nodal-averaged macro results. The extension has been tested outside Mechanical (helpers, command-line quoting, the full CSV → process → CSV round trip); the Mechanical-side API calls (`GetResultsData`, `CurrentConsistentUnitFromQuantityName`, `collector.SetValues`) still need a check in a live session.

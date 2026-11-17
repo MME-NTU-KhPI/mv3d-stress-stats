@@ -1,0 +1,97 @@
+<extension version="1" minorversion="0" name="RVEStressStats">
+  <guid shortid="RVEStressStats">ce0ee5ec-2923-494e-9e98-d494430d56d4</guid>
+  <author>mv3d-stress-ensemble-statistics</author>
+  <description>Local stress distribution at macro nodes from an ensemble of MatViz3D RVEs (6x6 localization superposition).</description>
+
+  <!-- rve_bridge.py holds the pure-Python helpers (shared with the CPython tests);
+       main.py holds the Mechanical callbacks. Both run in one IronPython scope. -->
+  <script src="rve_bridge.py" />
+  <script src="main.py" />
+
+  <interface context="Mechanical">
+    <images>images</images>
+    <toolbar name="RVEStressStats" caption="RVE statistics">
+      <entry name="AddRVEStat" caption="RVE stress statistic" icon="rve">
+        <callbacks>
+          <onclick>AddRVEStatistic</onclick>
+        </callbacks>
+      </entry>
+      <entry name="AddRVEExceed" caption="RVE exceedance probability" icon="rve">
+        <callbacks>
+          <onclick>AddRVEExceedance</onclick>
+        </callbacks>
+      </entry>
+    </toolbar>
+  </interface>
+
+  <simdata context="Mechanical">
+
+    <!-- Mean / std / min / max / quantile / Q(macro) of p(Q | node), stress unit -->
+    <result name="RVEStatistic" version="1" caption="RVE stress statistic" icon="rve"
+            location="node" type="scalar" unit="Stress">
+      <callbacks>
+        <evaluate>EvaluateRVEStatistic</evaluate>
+      </callbacks>
+      <property name="Geometry" caption="Geometry" control="scoping" />
+
+      <propertygroup name="Ensemble" caption="RVE ensemble" display="caption">
+        <property name="Basis" caption="Basis HDF5 file" control="fileopen" default="">
+          <attributes filters="MatViz3D HDF5 (*.hdf5;*.h5)|*.hdf5;*.h5" />
+        </property>
+        <property name="Sets" caption="Set indices (blank = all)" control="text" default="" />
+        <property name="Python" caption="Python executable" control="fileopen" default="python">
+          <attributes filters="python.exe|python.exe" />
+        </property>
+        <property name="Package" caption="Package folder (mv3d_stress_stats parent)" control="folderopen" default="" />
+      </propertygroup>
+
+      <property name="Input" caption="Macro state" control="select" default="Elastic strain (EPEL)">
+        <attributes options="Elastic strain (EPEL),Stress (S)" />
+      </property>
+      <property name="Quantity" caption="Quantity" control="select" default="von_mises">
+        <attributes options="von_mises,principal_1,principal_2,principal_3,hydrostatic_stress,sx,sy,sz,sxy,syz,sxz" />
+      </property>
+      <property name="Statistic" caption="Statistic" control="select" default="Quantile">
+        <attributes options="Quantile,Mean,Std,Min,Max,Q(macro)" />
+      </property>
+      <property name="Probability" caption="Quantile level (0..1)" control="float" default="0.95" />
+      <property name="StressUnit" caption="Solver stress unit" control="select" default="Auto">
+        <attributes options="Auto,Pa,kPa,MPa,GPa" />
+      </property>
+      <property name="PlotNodes" caption="Plot p(Q|node) for node IDs" control="text" default="" />
+    </result>
+
+    <!-- P(Q > threshold | node), dimensionless -->
+    <result name="RVEExceedance" version="1" caption="RVE exceedance probability" icon="rve"
+            location="node" type="scalar">
+      <callbacks>
+        <evaluate>EvaluateRVEExceedance</evaluate>
+      </callbacks>
+      <property name="Geometry" caption="Geometry" control="scoping" />
+
+      <propertygroup name="Ensemble" caption="RVE ensemble" display="caption">
+        <property name="Basis" caption="Basis HDF5 file" control="fileopen" default="">
+          <attributes filters="MatViz3D HDF5 (*.hdf5;*.h5)|*.hdf5;*.h5" />
+        </property>
+        <property name="Sets" caption="Set indices (blank = all)" control="text" default="" />
+        <property name="Python" caption="Python executable" control="fileopen" default="python">
+          <attributes filters="python.exe|python.exe" />
+        </property>
+        <property name="Package" caption="Package folder (mv3d_stress_stats parent)" control="folderopen" default="" />
+      </propertygroup>
+
+      <property name="Input" caption="Macro state" control="select" default="Elastic strain (EPEL)">
+        <attributes options="Elastic strain (EPEL),Stress (S)" />
+      </property>
+      <property name="Quantity" caption="Quantity" control="select" default="von_mises">
+        <attributes options="von_mises,principal_1,principal_2,principal_3,hydrostatic_stress,sx,sy,sz,sxy,syz,sxz" />
+      </property>
+      <property name="Threshold" caption="Threshold (solver stress unit)" control="float" default="0" />
+      <property name="StressUnit" caption="Solver stress unit" control="select" default="Auto">
+        <attributes options="Auto,Pa,kPa,MPa,GPa" />
+      </property>
+      <property name="PlotNodes" caption="Plot p(Q|node) for node IDs" control="text" default="" />
+    </result>
+
+  </simdata>
+</extension>

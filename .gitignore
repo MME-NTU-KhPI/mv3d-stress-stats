@@ -20,3 +20,6 @@ dist/
 *.egg-info/
 .idea/
 .vscode/
+
+# Localization basis cache (node_cli / ACT)
+*.basis-*.npz

@@ -50,6 +50,7 @@ from mv3d_stress_stats.ensemble import (
 from mv3d_stress_stats.joint import (
     JointDistribution2D,
     compute_joint_histogram_2d,
+    compute_joint_kde_2d,
     compute_ensemble_joint_2d,
 )
 from mv3d_stress_stats.copula import (
@@ -70,6 +71,16 @@ from mv3d_stress_stats.directional import (
     principal_direction_angles,
     compute_circular_statistics,
     compute_directional_histogram,
+    PairPlaneSectionResult,
+    compute_pair_plane_sections,
+    compute_all_pair_plane_sections,
+    PairPlaneRaySectionResult,
+    compute_pair_plane_ray_sections,
+    compute_all_pair_plane_ray_sections,
+    PairPlaneCartesianSectionResult,
+    compute_pair_plane_cartesian_sections,
+    compute_all_pair_plane_cartesian_sections,
+    CANONICAL_PAIR_PLANES,
 )
 from mv3d_stress_stats.multiload import (
     LoadingCaseInfo,
@@ -77,7 +88,15 @@ from mv3d_stress_stats.multiload import (
     identify_loading_case,
     analyze_multiload,
 )
+from mv3d_stress_stats.localization import (
+    LocalizationBasis,
+    NodeDistribution,
+    SuperpositionCheck,
+    weighted_quantiles,
+)
 from mv3d_stress_stats.plotting import (
+    plot_node_distribution,
+    plot_superposition_validation,
     plot_ensemble_pdf,
     plot_variance_decomposition,
     plot_joint_density_2d,
@@ -87,6 +106,16 @@ from mv3d_stress_stats.plotting import (
     plot_directional_histogram,
     plot_multiload_directional_grid,
     plot_loading_dashboard,
+    plot_pair_plane_sections,
+    plot_pair_planes_grid,
+    plot_pair_planes_angular_comparison,
+    plot_pair_plane_polar_heatmap,
+    plot_pair_plane_ray_sections,
+    plot_pair_planes_ray_grid,
+    plot_pair_plane_ray_dashboard,
+    plot_pair_plane_cartesian_sections,
+    plot_pair_planes_cartesian_grid,
+    plot_pair_plane_cartesian_dashboard,
 )
 
 __all__ = [
@@ -130,6 +159,7 @@ __all__ = [
     # Joint
     "JointDistribution2D",
     "compute_joint_histogram_2d",
+    "compute_joint_kde_2d",
     "compute_ensemble_joint_2d",
     # Copula
     "fit_gaussian_copula",
@@ -147,12 +177,29 @@ __all__ = [
     "principal_direction_angles",
     "compute_circular_statistics",
     "compute_directional_histogram",
+    "PairPlaneSectionResult",
+    "compute_pair_plane_sections",
+    "compute_all_pair_plane_sections",
+    "PairPlaneRaySectionResult",
+    "compute_pair_plane_ray_sections",
+    "compute_all_pair_plane_ray_sections",
+    "PairPlaneCartesianSectionResult",
+    "compute_pair_plane_cartesian_sections",
+    "compute_all_pair_plane_cartesian_sections",
+    "CANONICAL_PAIR_PLANES",
     # Multiload
     "LoadingCaseInfo",
     "MultiloadAnalysisResult",
     "identify_loading_case",
     "analyze_multiload",
+    # Localization (exact node-level distributions)
+    "LocalizationBasis",
+    "NodeDistribution",
+    "SuperpositionCheck",
+    "weighted_quantiles",
     # Plotting
+    "plot_node_distribution",
+    "plot_superposition_validation",
     "plot_ensemble_pdf",
     "plot_variance_decomposition",
     "plot_joint_density_2d",
@@ -162,5 +209,15 @@ __all__ = [
     "plot_directional_histogram",
     "plot_multiload_directional_grid",
     "plot_loading_dashboard",
+    "plot_pair_plane_sections",
+    "plot_pair_planes_grid",
+    "plot_pair_planes_angular_comparison",
+    "plot_pair_plane_polar_heatmap",
+    "plot_pair_plane_ray_sections",
+    "plot_pair_planes_ray_grid",
+    "plot_pair_plane_ray_dashboard",
+    "plot_pair_plane_cartesian_sections",
+    "plot_pair_planes_cartesian_grid",
+    "plot_pair_plane_cartesian_dashboard",
 ]
 

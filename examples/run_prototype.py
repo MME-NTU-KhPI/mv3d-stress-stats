@@ -46,6 +46,11 @@ from mv3d_stress_stats import (
     plot_directional_histogram,
     plot_multiload_directional_grid,
     plot_loading_dashboard,
+    compute_all_pair_plane_sections,
+    plot_pair_planes_grid,
+    plot_pair_plane_sections,
+    plot_pair_planes_angular_comparison,
+    plot_pair_plane_polar_heatmap,
 )
 
 
@@ -133,7 +138,7 @@ def main():
     # ---------------------------------------------------------
     if num_sets >= 3:
         # File contains multiple real realizations (e.g. result-10-5.hdf5 has 100 sets)
-        n_ens = min(5, num_sets)
+        n_ens = num_sets
         print(f"\n[3] Constructing RVE Ensemble from {n_ens} real realizations in {target_file.name}:")
         sims = [
             RVESimulation(target_file, set_index=i, load_step=1, as_grid=True)
@@ -329,6 +334,40 @@ def main():
     fig_ldash.savefig(ldash_path, dpi=300, bbox_inches="tight")
     plt.close(fig_ldash)
     print(f"    - Saved: {ldash_path.name}")
+
+    # (i) Pair Plane Sections Grid
+    first_sim = ensemble._get_realizations(load_step=1)[0]
+    pair_sections = compute_all_pair_plane_sections(first_sim, centered=True)
+    fig_pp, _ = plot_pair_planes_grid(pair_sections, ncols=3, figsize=(16, 9))
+    pp_path = fig_dir / "pair_plane_sections_grid.png"
+    fig_pp.savefig(pp_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_pp)
+    print(f"    - Saved: {pp_path.name}")
+
+    # (j) 2D Polar Heatmap with Horizontal Reference Lines Across All Angles
+    sec_sx_sy = pair_sections["(SX, SY)"]
+    fig_hm, ax_hm = plt.subplots(figsize=(9, 5.5))
+    plot_pair_plane_polar_heatmap(sec_sx_sy, ax=ax_hm, show_section_lines=True, show_mean_line=True)
+    hm_path = fig_dir / "pair_plane_polar_heatmap.png"
+    fig_hm.savefig(hm_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_hm)
+    print(f"    - Saved: {hm_path.name}")
+
+    # (k) PDF Section Curves for (SX, SY)
+    fig_sec, ax_sec = plt.subplots(figsize=(9, 5))
+    plot_pair_plane_sections(sec_sx_sy, ax=ax_sec)
+    sec_path = fig_dir / "pair_plane_sections_sx_sy.png"
+    fig_sec.savefig(sec_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_sec)
+    print(f"    - Saved: {sec_path.name}")
+
+    # (l) Angular Probability Density Comparison
+    fig_comp, ax_comp = plt.subplots(figsize=(10, 5))
+    plot_pair_planes_angular_comparison(pair_sections, ax=ax_comp)
+    comp_path = fig_dir / "pair_plane_angular_comparison.png"
+    fig_comp.savefig(comp_path, dpi=300, bbox_inches="tight")
+    plt.close(fig_comp)
+    print(f"    - Saved: {comp_path.name}")
 
     print("\n" + "=" * 70)
     print(" Analysis and plot generation complete! All phases verified.")
