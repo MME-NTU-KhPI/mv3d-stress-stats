@@ -70,7 +70,7 @@ def test_extension_xml_callbacks_exist():
     import xml.etree.ElementTree as ET
 
     root = ET.parse(ACT.parent / "RVEStressStats.xml").getroot()
-    names = {n.text for n in root.iter() if n.tag in ("evaluate", "onclick")}
+    names = {n.text for n in root.iter() if n.tag in ("evaluate", "onclick", "isvalid")}
     tree = ast.parse((ACT / "main.py").read_text(encoding="utf-8"))
     defined = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
     assert names and names <= defined
@@ -160,3 +160,87 @@ def test_mechanical_style_subprocess_roundtrip(tmp_path):
         assert q95[nid] == pytest.approx(ref["quantiles"][j, 0] / 1e6, rel=1e-7)
         assert pex[nid] == pytest.approx(ref["exceedance"][j, 0], abs=1e-6)
     assert (tmp_path / "plots" / "node_7_von_mises.png").is_file()
+
+
+def test_extension_icons_exist():
+    import xml.etree.ElementTree as ET
+
+    from PIL import Image
+
+    root = ET.parse(ACT.parent / "RVEStressStats.xml").getroot()
+    ext_icon = ACT / root.get("icon")
+    assert ext_icon.is_file()
+    names = {e.get("icon") for e in root.iter() if e.get("icon") and e is not root}
+    for n in names:
+        p = ACT / "images" / f"{n}.png"
+        assert p.is_file(), p
+        assert Image.open(p).size == (16, 16)
+        # tree objects: 16x16 24-bit BMP, light and dark theme (LSDYNA layout)
+        for b in (ACT / "images" / f"{n}.bmp", ACT / "images" / "dark" / f"{n}.bmp"):
+            im = Image.open(b)
+            assert im.format == "BMP" and im.size == (16, 16) and im.mode == "RGB", b
+
+
+# ------------------------------------------------------------ element-nodal averaging
+def test_average_element_nodal_shared_node():
+    # two 2-node "elements" sharing node 2; one component for readability
+    els = [([1, 2], [1, 2], [1.0, 3.0]), ([2, 3], [2, 3], [5.0, 7.0])]
+    xyz = {1: (0, 0, 0), 2: (1, 0, 0), 3: (2, 0, 0)}
+    out = bridge.average_element_nodal(els, [1, 2, 3], xyz, ncomp=1)
+    assert out == {1: [1.0], 2: [4.0], 3: [7.0]}
+
+
+def test_average_element_nodal_midside_from_corners():
+    # quadratic triangle: corners 1,2,3 carry data, midsides 4 (1-2), 5 (2-3), 6 (3-1) do not
+    xyz = {1: (0, 0, 0), 2: (2, 0, 0), 3: (0, 2, 0), 4: (1, 0, 0), 5: (1, 1, 0), 6: (0, 1, 0)}
+    vals = [10.0, 0.0, 20.0, 2.0, 30.0, 4.0]          # 2 components x 3 corners
+    els = [([1, 2, 3, 4, 5, 6], [1, 2, 3], vals)]
+    out = bridge.average_element_nodal(els, [4, 5, 6, 1], xyz, ncomp=2)
+    assert out[4] == [15.0, 1.0] and out[5] == [25.0, 3.0] and out[6] == [20.0, 2.0]
+    assert out[1] == [10.0, 0.0]
+
+
+def test_average_element_nodal_missing_node_raises():
+    with pytest.raises(ValueError):
+        bridge.average_element_nodal([([1, 2], [1, 2], [1.0, 2.0])], [9], {1: (0, 0, 0)}, ncomp=1)
+
+
+def test_find_package_root(tmp_path):
+    assert bridge.find_package_root("", [str(ACT)]) == str(ROOT)          # search upward
+    assert bridge.find_package_root(str(ROOT)) == str(ROOT)               # repository root
+    assert bridge.find_package_root(str(ROOT / "mv3d_stress_stats")) == str(ROOT)  # package itself
+    assert bridge.find_package_root("", [str(tmp_path)]) == ""             # nothing found
+    with pytest.raises(ValueError, match="CONTAINS"):
+        bridge.find_package_root(str(tmp_path))
+
+
+def test_cli_args_are_unbuffered():
+    args = bridge.build_cli_args("b.h5", "n.csv", "o.csv", "strain", "von_mises", "Pa")
+    assert args[:3] == ["-u", "-m", "mv3d_stress_stats.node_cli"]
+
+
+def test_average_element_nodal_ignores_reader_no_data_marker():
+    big = 1.7976931348623157e308  # what the ANSYS reader returns where it has no value
+    xyz = {1: (0, 0, 0), 2: (2, 0, 0), 3: (1, 0, 0)}
+    # quadratic edge 1-2 with midside 3; the element reports a value block for every
+    # node, but the midside block is the "no data" marker
+    els = [([1, 2, 3], [1, 2], [1.0, 2.0, 3.0, 4.0, big, big]),
+           ([1, 2, 3], [1, 2], [3.0, 2.0, 5.0, 4.0, float("inf"), 0.0])]
+    info = {}
+    out = bridge.average_element_nodal(els, [1, 2, 3], xyz, ncomp=2, stats=info)
+    assert out[1] == [2.0, 2.0] and out[2] == [4.0, 4.0]
+    assert out[3] == [3.0, 3.0]                    # filled from the edge corners, not inf
+    assert info == {"skipped_blocks": 2, "filled_midside": 1}
+
+
+def test_average_element_nodal_coords_are_lazy():
+    calls = []
+
+    def xyz(n):
+        calls.append(n)
+        return {1: (0, 0, 0), 2: (2, 0, 0), 3: (1, 0, 0), 4: (5, 0, 0)}[n]
+
+    els = [([1, 2, 3], [1, 2], [1.0, 3.0]), ([2, 4], [2, 4], [3.0, 7.0])]
+    out = bridge.average_element_nodal(els, [1, 2, 3, 4], xyz, ncomp=1)
+    assert out[3] == [2.0]
+    assert sorted(set(calls)) == [1, 2, 3]  # only the missing node and its element's corners

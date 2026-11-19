@@ -36,8 +36,15 @@ Get-ChildItem $dst -Recurse | Select-Object FullName
 ...\extensions\RVEStressStats.xml
 ...\extensions\RVEStressStats\main.py
 ...\extensions\RVEStressStats\rve_bridge.py
-...\extensions\RVEStressStats\images\rve.png
+...\extensions\RVEStressStats\images\rve.png       (16 px, кнопки)
+...\extensions\RVEStressStats\images\rve.bmp       (16 px BMP, дерево Mechanical)
+...\extensions\RVEStressStats\images\dark\rve.bmp  (те саме для темної теми)
+...\extensions\RVEStressStats\images\rve32.png     (32 px)
+...\extensions\RVEStressStats\images\rve_ext.png   (128 px, іконка розширення)
 ```
+
+Іконки зроблені з логотипу MatViz3D з плашкою «ACT»; перегенерувати:
+`python act/make_icons.py D:\temp\1\MatViz3D\img\MatViz3D.png`.
 
 Після кожної зміни коду в репозиторії повторюйте копіювання, а в Workbench
 виконайте *Extensions → Reload Extensions* (або перезапустіть Mechanical).

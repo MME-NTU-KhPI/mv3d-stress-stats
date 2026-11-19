@@ -116,3 +116,45 @@ def test_direction_sweep_matches_node_distribution():
     np.testing.assert_allclose(eta.quantiles * sw.q_macro[:, None], sw.quantiles, rtol=1e-9)
     with pytest.raises(ValueError):
         direction_sweep(b, "hydrostatic_stress", 0, 3, 50e6, [90.0], normalize=True)
+
+
+@pytest.mark.parametrize("q", ["von_mises", "seqv", "j2", "hydrostatic_stress", "mean_stress",
+                               "pressure", "i1", "sx", "sxy", "syz"])
+def test_fast_operator_matches_generic(q):
+    from mv3d_stress_stats.invariants import resolve_quantity
+
+    b = _synthetic_basis()
+    m, n = b.A.shape[:2]
+    f = b._fast_evaluator(q, b.A, None)
+    assert f is not None
+    eps = np.random.default_rng(4).normal(size=(5, 6)) * 1e-4
+    sig = (b.A.reshape(m * n, 6, 6) @ eps.T).transpose(2, 0, 1)
+    ref = resolve_quantity(q)(sig)
+    np.testing.assert_allclose(f(eps), ref, rtol=1e-9, atol=1e-9 * np.abs(ref).max())
+
+
+def test_nodal_statistics_threads_and_bad_rows():
+    b = _synthetic_basis()
+    b.A += np.eye(6)[None, None] * 1e11
+    eps = np.random.default_rng(5).normal(size=(30, 6)) * 1e-4
+    eps[[3, 17]] = [np.inf, 0, 0, 0, 0, 0], [3e307, 0, 0, 0, 0, 0]  # inf and reader sentinel
+    for q in ("von_mises", "principal_1"):
+        one = b.nodal_statistics(q, macro_strains=eps, probs=[0.1, 0.9], thresholds=[1e6], n_jobs=1)
+        four = b.nodal_statistics(q, macro_strains=eps, probs=[0.1, 0.9], thresholds=[1e6], n_jobs=4)
+        for k in one:
+            np.testing.assert_array_equal(np.isnan(one[k]), np.isnan(four[k]))
+            np.testing.assert_allclose(one[k], four[k], rtol=1e-12, equal_nan=True)
+        assert np.isnan(one["mean"][[3, 17]]).all() and np.isfinite(np.delete(one["mean"], [3, 17])).all()
+
+
+def test_principal_closed_form_matches_eigvalsh():
+    from mv3d_stress_stats.invariants import principal_1, principal_2, principal_3, principal_stresses
+    from mv3d_stress_stats.tensors import to_tensor_3x3
+
+    s = np.random.default_rng(6).normal(size=(20000, 6)) * 1e8
+    s[:3] = [[6e7, 6e7, 0, 0, 0, 0], [5e7, 5e7, 5e7, 0, 0, 0], [0, 0, 0, 0, 0, 0]]  # degenerate
+    ref = np.flip(np.linalg.eigvalsh(to_tensor_3x3(s)), -1)
+    tol = 1e-8 * np.abs(s).max()
+    np.testing.assert_allclose(principal_stresses(s), ref, atol=tol)
+    for k, f in enumerate([principal_1, principal_2, principal_3]):
+        np.testing.assert_allclose(f(s), ref[:, k], atol=tol)

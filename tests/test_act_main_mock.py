@@ -28,9 +28,13 @@ class _Task:
 class _Stream:
     def __init__(self, text):
         self._t = text
+        self._lines = text.splitlines()
 
     def ReadToEnd(self):
         return self._t
+
+    def ReadLine(self):  # .NET StreamReader: None at end of stream
+        return self._lines.pop(0) if self._lines else None
 
     def ReadToEndAsync(self):
         return _Task(self._t)
@@ -84,24 +88,68 @@ class _Prop:
         self.Name, self.Value = name, value
 
 
-class _Result:  # IResult
-    def __init__(self, table):
-        self._t = table
+class _Result:  # IResult of an element-nodal quantity (S, EPEL) as in Mechanical
+    def __init__(self, table, mesh):
+        self._t, self._mesh = table, mesh
 
     def SelectComponents(self, comps):
         assert list(comps) == ["X", "Y", "Z", "XY", "YZ", "XZ"]
 
     def GetNodeValues(self, nid):
-        return list(self._t[nid])
+        raise Exception("This result is not a nodal result.")
+
+    def GetElementValues(self, eid):
+        # corner-node values only, 6 components each, in CornerNodeIds order
+        el = self._mesh.ElementById(eid)
+        return [v for n in el.CornerNodeIds for v in self._t[n]]
+
+
+class _Node:
+    def __init__(self, nid, xyz, elems):
+        self.Id, (self.X, self.Y, self.Z), self.ConnectedElementIds = nid, xyz, elems
+
+
+class _Element:
+    def __init__(self, eid, corners, mids):
+        self.Id, self.CornerNodeIds, self.NodeIds = eid, corners, corners + mids
+
+
+class _Mesh:  # IMeshData: a chain of quadratic 1D "elements" through the nodes
+    def __init__(self, ids):
+        self._el, self._nd = {}, {}
+        mid0 = 100000
+        for k, (a, b) in enumerate(zip(ids[:-1], ids[1:])):
+            m = mid0 + k
+            self._el[k + 1] = _Element(k + 1, [a, b], [m])
+            self._nd.setdefault(a, (float(k), 0.0, 0.0))
+            self._nd[b] = (float(k + 1), 0.0, 0.0)
+            self._nd[m] = (k + 0.5, 0.0, 0.0)
+        if len(ids) == 1:  # single node: one 1-node element
+            self._el[1] = _Element(1, [ids[0]], [])
+            self._nd[ids[0]] = (0.0, 0.0, 0.0)
+
+    def ElementIdsFromNodeIds(self, nids):
+        nids = set(nids)
+        return [e.Id for e in self._el.values() if nids & set(e.NodeIds)]
+
+    def ElementById(self, eid):
+        return self._el[eid]
+
+    def NodeById(self, nid):
+        return _Node(nid, self._nd[nid], [])
 
 
 class _Reader:  # IResultReader
     def __init__(self, data):
         self._d, self.CurrentResultSet, self.disposed = data, None, False
+        self._mesh = _Mesh(sorted(next(iter(data.values())).keys()) if data else [])
 
     def GetResult(self, name):
         assert self.CurrentResultSet == 1
-        return _Result(self._d[name])
+        return _Result(self._d[name], self._mesh)
+
+    def CreateMeshData(self):
+        return self._mesh
 
     def Dispose(self):
         self.disposed = True
@@ -137,11 +185,20 @@ class _Step:  # IStepInfo
     Set = 1
 
 
-def _load_main(monkeypatch):
+LOG_LINES = []
+
+
+def _load_main(monkeypatch, install_dir=None):
     _install_dotnet_mocks(monkeypatch)
+    LOG_LINES.clear()
+    log = types.SimpleNamespace(WriteMessage=lambda m: LOG_LINES.append(("I", m)),
+                                WriteWarning=lambda m: LOG_LINES.append(("W", m)),
+                                WriteError=lambda m: LOG_LINES.append(("E", m)))
+    ext = types.SimpleNamespace(InstallDir=str(install_dir or ACT))
     scope = {"__name__": "act_scope",
-             "ExtAPI": types.SimpleNamespace(Log=types.SimpleNamespace(WriteMessage=lambda m: None),
-                                             DataModel=None)}
+             "ExtAPI": types.SimpleNamespace(
+                 Log=log, DataModel=None,
+                 ExtensionManager=types.SimpleNamespace(CurrentExtension=ext))}
     for name in ("rve_bridge.py", "main.py"):  # same shared scope as the XML <script> tags
         exec(compile((ACT / name).read_text(encoding="utf-8"), name, "exec"), scope)
     return scope
@@ -212,3 +269,52 @@ def test_cli_error_is_reported(monkeypatch, tmp_path):
                                  "Statistic": "Mean", "Probability": 0.5})
     with pytest.raises(Exception, match="node_cli failed"):
         act["EvaluateRVEStatistic"](res, _Step(), _Collector([1]))
+
+
+def test_isvalid_callbacks(monkeypatch, tmp_path):
+    act = _load_main(monkeypatch)
+    P = lambda v: _Prop("x", v)
+    assert act["RVEOptionalValid"](None, P(""))
+    assert act["RVEOptionalValid"](None, P(None))
+    assert not act["RVENonEmptyValid"](None, P("  "))
+    assert act["RVENonEmptyValid"](None, P("python"))
+    f = tmp_path / "b.hdf5"
+    f.write_bytes(b"x")
+    assert act["RVEBasisValid"](None, P(str(f)))
+    assert not act["RVEBasisValid"](None, P(str(tmp_path / "missing.hdf5")))
+    assert not act["RVEBasisValid"](None, P(""))
+    assert act["RVEProbabilityValid"](None, P(0.95))
+    assert not act["RVEProbabilityValid"](None, P(1.0))
+    assert not act["RVEProbabilityValid"](None, P("abc"))
+
+
+@pytest.mark.skipif(not MULTI.is_file(), reason="result-10-5.hdf5 not present")
+def test_blank_package_is_auto_detected_and_progress_logged(monkeypatch, tmp_path):
+    act = _load_main(monkeypatch)  # extension "installed" in the repository's act folder
+    analysis = _Analysis(tmp_path, {"EPEL": {1: [1e-4, 0, 0, 0, 0, 0], 2: [0, 1e-4, 0, 0, 0, 0]}}, "MPa")
+    res = _UserResult(analysis, {"Ensemble/Basis": str(MULTI), "Ensemble/Sets": "0,1",
+                                 "Ensemble/Python": sys.executable, "Ensemble/Package": "",
+                                 "Input": act["INPUT_STRAIN"], "Quantity": "von_mises",
+                                 "StressUnit": "Auto", "PlotNodes": "",
+                                 "Statistic": "Mean", "Probability": 0.5})
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    col = _Collector([1, 2])
+    act["EvaluateRVEStatistic"](res, _Step(), col)
+    assert set(col.values) == {1, 2}
+    text = "\n".join(m for _, m in LOG_LINES)
+    assert "(auto-detected)" in text and "py> [node_cli" in text and "done: mean" in text
+    logfile = tmp_path / "RVEStressStats" / "RVEStressStats.log"
+    assert "von_mises: 2/2 nodes (100%)" in logfile.read_text()
+
+
+def test_wrong_package_folder_gives_clear_error(monkeypatch, tmp_path):
+    act = _load_main(monkeypatch, install_dir=tmp_path)
+    f = tmp_path / "b.hdf5"
+    f.write_bytes(b"x")
+    analysis = _Analysis(tmp_path, {}, "Pa")
+    res = _UserResult(analysis, {"Ensemble/Basis": str(f), "Ensemble/Package": str(tmp_path),
+                                 "Input": act["INPUT_STRAIN"], "Quantity": "von_mises",
+                                 "StressUnit": "Pa", "Statistic": "Mean", "Probability": 0.5})
+    with pytest.raises(Exception, match="CONTAINS mv3d_stress_stats"):
+        act["EvaluateRVEStatistic"](res, _Step(), _Collector([1]))
+    assert any(level == "E" and "FAILED" in m for level, m in LOG_LINES)

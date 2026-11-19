@@ -1,4 +1,4 @@
-<extension version="1" minorversion="0" name="RVEStressStats">
+<extension version="1" minorversion="0" name="RVEStressStats" icon="images/rve_ext.png">
   <guid shortid="RVEStressStats">ce0ee5ec-2923-494e-9e98-d494430d56d4</guid>
   <author>mv3d-stress-ensemble-statistics</author>
   <description>Local stress distribution at macro nodes from an ensemble of MatViz3D RVEs (6x6 localization superposition).</description>
@@ -36,13 +36,19 @@
 
       <propertygroup name="Ensemble" caption="RVE ensemble" display="caption">
         <property name="Basis" caption="Basis HDF5 file" control="fileopen" default="">
+          <callbacks><isvalid>RVEBasisValid</isvalid></callbacks>
           <attributes filters="MatViz3D HDF5 (*.hdf5;*.h5)|*.hdf5;*.h5" />
         </property>
-        <property name="Sets" caption="Set indices (blank = all)" control="text" default="" />
+        <property name="Sets" caption="Set indices (blank = all)" control="text" default="">
+          <callbacks><isvalid>RVEOptionalValid</isvalid></callbacks>
+        </property>
         <property name="Python" caption="Python executable" control="fileopen" default="python">
+          <callbacks><isvalid>RVENonEmptyValid</isvalid></callbacks>
           <attributes filters="python.exe|python.exe" />
         </property>
-        <property name="Package" caption="Package folder (mv3d_stress_stats parent)" control="folderopen" default="" />
+        <property name="Package" caption="Package folder (blank = pip-installed)" control="folderopen" default="">
+          <callbacks><isvalid>RVEOptionalValid</isvalid></callbacks>
+        </property>
       </propertygroup>
 
       <property name="Input" caption="Macro state" control="select" default="Elastic strain (EPEL)">
@@ -54,11 +60,15 @@
       <property name="Statistic" caption="Statistic" control="select" default="Quantile">
         <attributes options="Quantile,Mean,Std,Min,Max,Q(macro)" />
       </property>
-      <property name="Probability" caption="Quantile level (0..1)" control="float" default="0.95" />
+      <property name="Probability" caption="Quantile level (0..1)" control="float" default="0.95">
+        <callbacks><isvalid>RVEProbabilityValid</isvalid></callbacks>
+      </property>
       <property name="StressUnit" caption="Solver stress unit" control="select" default="Auto">
         <attributes options="Auto,Pa,kPa,MPa,GPa" />
       </property>
-      <property name="PlotNodes" caption="Plot p(Q|node) for node IDs" control="text" default="" />
+      <property name="PlotNodes" caption="Plot p(Q|node) for node IDs (optional)" control="text" default="">
+        <callbacks><isvalid>RVEOptionalValid</isvalid></callbacks>
+      </property>
     </result>
 
     <!-- P(Q > threshold | node), dimensionless -->
@@ -71,13 +81,19 @@
 
       <propertygroup name="Ensemble" caption="RVE ensemble" display="caption">
         <property name="Basis" caption="Basis HDF5 file" control="fileopen" default="">
+          <callbacks><isvalid>RVEBasisValid</isvalid></callbacks>
           <attributes filters="MatViz3D HDF5 (*.hdf5;*.h5)|*.hdf5;*.h5" />
         </property>
-        <property name="Sets" caption="Set indices (blank = all)" control="text" default="" />
+        <property name="Sets" caption="Set indices (blank = all)" control="text" default="">
+          <callbacks><isvalid>RVEOptionalValid</isvalid></callbacks>
+        </property>
         <property name="Python" caption="Python executable" control="fileopen" default="python">
+          <callbacks><isvalid>RVENonEmptyValid</isvalid></callbacks>
           <attributes filters="python.exe|python.exe" />
         </property>
-        <property name="Package" caption="Package folder (mv3d_stress_stats parent)" control="folderopen" default="" />
+        <property name="Package" caption="Package folder (blank = pip-installed)" control="folderopen" default="">
+          <callbacks><isvalid>RVEOptionalValid</isvalid></callbacks>
+        </property>
       </propertygroup>
 
       <property name="Input" caption="Macro state" control="select" default="Elastic strain (EPEL)">
@@ -90,7 +106,9 @@
       <property name="StressUnit" caption="Solver stress unit" control="select" default="Auto">
         <attributes options="Auto,Pa,kPa,MPa,GPa" />
       </property>
-      <property name="PlotNodes" caption="Plot p(Q|node) for node IDs" control="text" default="" />
+      <property name="PlotNodes" caption="Plot p(Q|node) for node IDs (optional)" control="text" default="">
+        <callbacks><isvalid>RVEOptionalValid</isvalid></callbacks>
+      </property>
     </result>
 
   </simdata>

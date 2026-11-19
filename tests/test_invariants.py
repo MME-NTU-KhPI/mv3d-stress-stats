@@ -29,10 +29,12 @@ def test_uniaxial_tension():
     
     # Principal stresses: [s0, 0, 0]
     p = principal_stresses(stress)
-    np.testing.assert_allclose(p, [s0, 0.0, 0.0])
+    # closed-form principal stresses: exact up to round-off of the stress scale
+    tol = 1e-12 * s0
+    np.testing.assert_allclose(p, [s0, 0.0, 0.0], atol=tol)
     assert principal_1(stress) == pytest.approx(s0)
-    assert principal_2(stress) == pytest.approx(0.0)
-    assert principal_3(stress) == pytest.approx(0.0)
+    assert principal_2(stress) == pytest.approx(0.0, abs=tol)
+    assert principal_3(stress) == pytest.approx(0.0, abs=tol)
     
     # Triaxiality: sigma_h / sigma_vm = (s0 / 3) / s0 = 1/3
     assert triaxiality(stress) == pytest.approx(1.0 / 3.0)
@@ -56,7 +58,7 @@ def test_pure_shear():
     
     # Principal stresses: [t0, 0, -t0]
     p = principal_stresses(stress)
-    np.testing.assert_allclose(p, [t0, 0.0, -t0])
+    np.testing.assert_allclose(p, [t0, 0.0, -t0], atol=1e-12 * abs(t0))  # round-off of closed form
     
     # Triaxiality: 0 / vm = 0
     assert triaxiality(stress) == pytest.approx(0.0)
@@ -75,7 +77,7 @@ def test_uniaxial_compression():
     assert von_mises(stress) == pytest.approx(s0)
     # Principal stresses: [0, 0, -s0]
     p = principal_stresses(stress)
-    np.testing.assert_allclose(p, [0.0, 0.0, -s0])
+    np.testing.assert_allclose(p, [0.0, 0.0, -s0], atol=1e-12 * abs(s0))  # round-off of closed form
     
     # Lode angle: theta = pi/3 for axisymmetric compression
     assert lode_angle(stress) == pytest.approx(np.pi / 3.0, abs=1e-5)

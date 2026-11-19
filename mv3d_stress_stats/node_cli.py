@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import time
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
@@ -105,29 +106,47 @@ def main(argv=None) -> int:
                     help="unit of input stresses, thresholds and output stresses")
     ap.add_argument("--cache-dir", default="", help="folder for the .npz basis cache")
     ap.add_argument("--no-cache", action="store_true", help="always rebuild the basis from HDF5")
+    ap.add_argument("--progress-chunk", type=int, default=2000,
+                    help="nodes per progress line (statistics are computed in such chunks)")
     args = ap.parse_args(argv)
 
+    t0 = time.perf_counter()
+    say = lambda msg: print(f"[node_cli +{time.perf_counter() - t0:6.2f}s] {msg}", flush=True)
+    say(f"python {sys.version.split()[0]}, numpy {np.__version__}")
+
     sets = [int(x) for x in args.sets.split(",") if x.strip()] or None
+    say(f"loading basis {args.basis} (sets: {'all' if sets is None else len(sets)})")
     if args.no_cache:
         basis = LocalizationBasis.from_file(args.basis, set_indices=sets)
+        say("basis built from HDF5 (cache disabled)")
     else:
         basis = LocalizationBasis.from_file_cached(args.basis, set_indices=sets,
                                                    cache_dir=args.cache_dir or None)
+        say(f"basis ready ({'cache hit' if basis.metadata.get('_from_cache') else 'built from HDF5, cache written'})")
+    say(f"basis: {basis.num_realizations} RVEs x {basis.num_points} points")
     ids, state = read_nodes_csv(args.input)
     probs, thr = _floats(args.probs), _floats(args.thresholds)
+    say(f"read {len(ids)} nodes ({args.kind}) from {args.input}")
 
     unit = STRESS_UNITS[args.stress_unit]
     out_scale = unit ** quantity_unit_power(args.quantity)  # Pa^k -> unit^k
-    if args.kind == "stress":
-        kw = {"macro_stresses": state * unit}
-    else:
-        kw = {"macro_strains": state}
-    stats = basis.nodal_statistics(args.quantity, probs=probs,
-                                   thresholds=[t * out_scale for t in thr], **kw)
+    state_si = state * unit if args.kind == "stress" else state
+    key = "macro_stresses" if args.kind == "stress" else "macro_strains"
+    parts = []
+    n = len(ids)
+    step = max(1, min(n, args.progress_chunk))
+    for j0 in range(0, n, step):
+        parts.append(basis.nodal_statistics(args.quantity, probs=probs,
+                                            thresholds=[t * out_scale for t in thr],
+                                            **{key: state_si[j0:j0 + step]}))
+        done = min(n, j0 + step)
+        say(f"{args.quantity}: {done}/{n} nodes ({100.0 * done / n:.0f}%)")
+    stats = {k: np.concatenate([pt[k] for pt in parts], axis=0) for k in parts[0]} if parts else \
+        basis.nodal_statistics(args.quantity, probs=probs, **{key: state_si})
     for k in ("q_macro", "mean", "std", "min", "max", "quantiles"):
         stats[k] = stats[k] / out_scale
     write_stats_csv(args.out, ids, stats, probs, thr)
-    print(f"{len(ids)} nodes, {basis.num_realizations} RVEs x {basis.num_points} points -> {args.out}")
+    say(f"wrote {args.out} ({len(ids)} nodes)")
 
     wanted = [x.strip() for x in args.plot_nodes.split(",") if x.strip()]
     if wanted:
@@ -151,7 +170,7 @@ def main(argv=None) -> int:
             p = out_dir / f"node_{nid}_{args.quantity}.png"
             fig.savefig(p, dpi=150, bbox_inches="tight")
             plt.close(fig)
-            print(f"  plot: {p}")
+            say(f"plot: {p}")
     return 0
 
 

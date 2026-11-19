@@ -40,6 +40,7 @@ can be forced with ``shear_in_file="tensor" | "engineering"``.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -117,6 +118,43 @@ class SuperpositionCheck:
 # --------------------------------------------------------------------------
 # Main class
 # --------------------------------------------------------------------------
+# Quantities that are linear (Q = l·σ) or the square root / identity of a
+# quadratic form (Q² = σᵀPσ) in the stress. For them Q over all points of all
+# RVEs is a single BLAS product with a per-point operator instead of building
+# the (nodes, points, 6) local stress array. The operators are derived from the
+# registry functions themselves (probing + verification), so they cannot
+# drift from invariants.py.
+# Macro states with |component| above this are treated as missing data (the
+# ANSYS result reader returns ~1.8e308 where it has no value): NaN statistics.
+_NO_DATA_LIMIT = 1e30
+
+_LINEAR_QUANTITIES = {"sx", "sy", "sz", "sxy", "syz", "sxz", "i1", "trace",
+                      "mean_stress", "hydrostatic_stress", "pressure"}
+_QUADRATIC_QUANTITIES = {"j2": "identity", "von_mises": "sqrt", "seqv": "sqrt"}
+
+
+def _probe_linear(q_fn) -> Optional[np.ndarray]:
+    eye = np.eye(6)
+    l = np.asarray(q_fn(eye), dtype=np.float64).reshape(6)
+    r = np.random.default_rng(7).normal(size=(16, 6))
+    ok = np.allclose(np.asarray(q_fn(r), dtype=np.float64), r @ l, rtol=1e-10, atol=1e-12)
+    return l if ok else None
+
+
+def _probe_quadratic(q_fn, kind: str) -> Optional[np.ndarray]:
+    sq = (lambda v: v) if kind == "identity" else (lambda v: v ** 2)
+    f = lambda s: sq(np.asarray(q_fn(s), dtype=np.float64))
+    eye = np.eye(6)
+    P = np.empty((6, 6))
+    d = f(eye)
+    for i in range(6):
+        for j in range(6):
+            P[i, j] = d[i] if i == j else 0.5 * (f(eye[i] + eye[j]) - d[i] - d[j])
+    r = np.random.default_rng(7).normal(size=(16, 6))
+    ok = np.allclose(f(r), np.einsum("ni,ij,nj->n", r, P, r), rtol=1e-10, atol=1e-12)
+    return P if ok else None
+
+
 class LocalizationBasis:
     """Per-point 6x6 stress-localization operators for an ensemble of RVEs.
 
@@ -267,7 +305,9 @@ class LocalizationBasis:
         cache = folder / f"{src.stem}.basis-{tag}.npz"
         if cache.exists():
             try:
-                return cls.load(cache)
+                b = cls.load(cache)
+                b.metadata["_from_cache"] = str(cache)
+                return b
             except Exception:
                 pass
         basis = cls.from_file(src, set_indices=set_indices)
@@ -418,6 +458,41 @@ class LocalizationBasis:
         }
         return nd
 
+    def _fast_evaluator(self, quantity, A: np.ndarray, cache_key):
+        """Return f(eps (c,6)) -> Q (c, M*N) using a precomputed per-point
+        operator, or None when ``quantity`` has no linear/quadratic form."""
+        if not isinstance(quantity, str):
+            return None
+        key = quantity.strip().lower()
+        cache = self.__dict__.setdefault("_fast_ops", {})
+        if (key, cache_key) in cache:
+            return cache[(key, cache_key)]
+        q_fn = resolve_quantity(quantity)
+        m, n = A.shape[:2]
+        Ap = A.reshape(m * n, 6, 6)
+        f = None
+        if key in _LINEAR_QUANTITIES:
+            l = _probe_linear(q_fn)
+            if l is not None:
+                L = np.ascontiguousarray(np.einsum("k,pkj->pj", l, Ap))      # (MN, 6)
+                f = lambda e: e @ L.T
+        elif key in _QUADRATIC_QUANTITIES:
+            kind = _QUADRATIC_QUANTITIES[key]
+            P = _probe_quadratic(q_fn, kind)
+            if P is not None:
+                K = np.einsum("pki,kl,plj->pij", Ap, P, Ap, optimize=True)  # (MN, 6, 6)
+                K = 0.5 * (K + K.transpose(0, 2, 1))
+                iu = np.triu_indices(6)
+                mult = np.where(iu[0] == iu[1], 1.0, 2.0)
+                Kt = np.ascontiguousarray((K[:, iu[0], iu[1]] * mult).T)    # (21, MN)
+
+                def f(e, Kt=Kt, iu=iu, kind=kind):
+                    ee = e[:, iu[0]] * e[:, iu[1]]                          # (c, 21)
+                    v = ee @ Kt
+                    return v if kind == "identity" else np.sqrt(np.maximum(v, 0.0))
+        cache[(key, cache_key)] = f
+        return f
+
     # ---------------------------------------------- many nodes (ACT field)
     def nodal_statistics(
         self,
@@ -427,6 +502,7 @@ class LocalizationBasis:
         probs: Sequence[float] = (0.05, 0.5, 0.95, 0.99),
         thresholds: Sequence[float] = (),
         realization_subset: Optional[Sequence[int]] = None,
+        n_jobs: Optional[int] = None,
     ) -> Dict[str, np.ndarray]:
         """Scalar distribution descriptors for every macro node.
 
@@ -435,19 +511,33 @@ class LocalizationBasis:
             probs: quantile levels to report.
             thresholds: values t for exceedance probabilities P(Q > t | node).
             realization_subset: optionally use only these realizations (speed).
+            n_jobs: worker threads (NumPy releases the GIL in the heavy
+                element-wise work); default min(4, CPU count). Memory per
+                chunk is divided by the thread count.
 
         Returns:
             dict with arrays: "mean", "std", "min", "max" (Nn,),
             "quantiles" (Nn, len(probs)), "exceedance" (Nn, len(thresholds)),
             "q_macro" (Nn,) = Q evaluated on the homogenized macro stress.
         """
+        if macro_stresses is not None:
+            macro_stresses = np.atleast_2d(np.asarray(macro_stresses, dtype=np.float64))
+            bad = ~(np.abs(macro_stresses) <= _NO_DATA_LIMIT).all(axis=1)  # inf, nan, reader sentinels
+            macro_stresses = np.where(bad[:, None], 0.0, macro_stresses)
+        else:
+            macro_strains = np.atleast_2d(np.asarray(macro_strains, dtype=np.float64))
+            bad = ~(np.abs(macro_strains) <= _NO_DATA_LIMIT).all(axis=1)  # inf, nan, reader sentinels
+            macro_strains = np.where(bad[:, None], 0.0, macro_strains)
         eps_all = self._resolve_strain(macro_strains, macro_stresses)
         eps_all = np.atleast_2d(eps_all)
         q_fn = resolve_quantity(quantity)
         A, w = self.A, self.weights
+        subset_key = None
         if realization_subset is not None:
             idx = np.asarray(realization_subset)
             A, w = A[idx], w[idx] / w[idx].sum()
+            subset_key = tuple(int(i) for i in idx)
+        fast = self._fast_evaluator(quantity, A, subset_key)
         m, n = A.shape[:2]
         sample_w = np.repeat(w / n, n)
         c_eff = self.effective_stiffness()
@@ -462,20 +552,34 @@ class LocalizationBasis:
         }
         thr = np.asarray(thresholds, dtype=np.float64)
         equal_w = np.allclose(w, w[0])
-        # (M*N*6, 6) contiguous operator -> one BLAS call per chunk of nodes
-        A2 = np.ascontiguousarray(A.reshape(m * n * 6, 6))
-        chunk = max(1, int(4e7 // (m * n * 6)))  # ~320 MB of float64 per chunk
-        for j0 in range(0, nn, chunk):
+        if n_jobs is None:
+            n_jobs = min(4, os.cpu_count() or 1)
+        n_jobs = max(1, int(n_jobs))
+        if fast is not None:
+            chunk = max(1, int(2e7 // (m * n) // n_jobs))  # ~160 MB of Q values in total
+        else:
+            # component-major operator (6 comp, 6 strain, M*N): each stress
+            # component of a chunk comes out as one contiguous (c, M*N) block
+            Lt = np.ascontiguousarray(A.reshape(m * n, 6, 6).transpose(1, 2, 0))
+            chunk = max(1, int(4e7 // (m * n * 6) // n_jobs))  # ~320 MB of stress in total
+
+        def work(j0):
             e = eps_all[j0:j0 + chunk]                                  # (c, 6)
-            sig = (A2 @ e.T).reshape(m * n, 6, -1).transpose(2, 0, 1)   # (c, M*N, 6)
-            vals = np.asarray(q_fn(sig), dtype=np.float64).reshape(len(e), m * n)
+            if fast is not None:
+                vals = fast(e)                                          # (c, M*N)
+            else:
+                comp = np.matmul(e[None], Lt)                           # (6, c, M*N)
+                vals = np.asarray(q_fn(np.moveaxis(comp, 0, -1)),
+                                  dtype=np.float64).reshape(len(e), m * n)
             mean = vals @ sample_w
             sl = slice(j0, j0 + len(e))
             out["mean"][sl] = mean
             out["std"][sl] = np.sqrt(((vals - mean[:, None]) ** 2) @ sample_w)
             out["min"][sl] = vals.min(axis=1)
             out["max"][sl] = vals.max(axis=1)
-            if equal_w:
+            if len(probs) == 0:
+                pass
+            elif equal_w:
                 # 'hazen' == mid-point CDF interpolation used by weighted_quantiles
                 out["quantiles"][sl] = np.quantile(vals, probs, axis=1, method="hazen").T
             else:
@@ -486,6 +590,20 @@ class LocalizationBasis:
                 out["exceedance"][sl] = np.stack(
                     [(vals > t) @ sample_w for t in thr], axis=1
                 )
+
+        starts = range(0, nn, chunk)
+        if n_jobs == 1 or nn <= chunk:
+            for j0 in starts:
+                work(j0)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=n_jobs) as pool:
+                for _ in pool.map(work, starts):  # re-raises worker errors
+                    pass
+        if bad.any():  # non-finite macro state (e.g. missing result data): no statistics
+            for k in out:
+                out[k][bad] = np.nan
         return out
 
 
